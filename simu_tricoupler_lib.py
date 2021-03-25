@@ -193,25 +193,50 @@ def binning(arr, binning, axis=0, avg=False):
     
     return arr
 
-def addPhotonNoise(data, ndark, fps, enf=None):
-    dark_electrons = ndark / fps
+def addPhotonNoise(data, QE, enf=None):
     if enf is None:
-        noisy_data = cp.random.poisson(data+dark_electrons, data.shape, dtype=cp.float32)
+        noisy_data = cp.random.poisson(data*QE, size=data.shape, dtype=cp.float32)
     else:
-        noisy_data = cp.random.poisson(data+dark_electrons, data.shape, dtype=cp.float32)
+        noisy_data = cp.random.poisson(data*QE*enf, size=data.shape, dtype=cp.float32)
     
     return noisy_data
 
-def addRON(data, ron, offset):
+def _addRON(data, ron, offset):
     ron_noise = cp.random.normal(offset, ron, data.shape)
     noisy_data = data + ron_noise
     return noisy_data
 
-def addNoise(data, QE, ron, ndark, fps, enf=None):
-    noisy = addPhotonNoise(data*QE, ndark, fps, enf)
-    noisy = addRON(noisy, ron, 0)
+def _addDark(ndark, fps, shape, enf=None):
+    dark_electrons = ndark / fps
+    if enf is None:
+        noisy_data = cp.random.poisson(dark_electrons, size=shape, dtype=cp.float32)
+    else:
+        noisy_data = cp.random.poisson(dark_electrons*enf, size=shape, dtype=cp.float32)
+    
+    return noisy_data
+
+def addDetectorNoise(data, ron, ndark, fps, enf=None):
+    noisy = data + _addDark(ndark, fps, data.shape, enf)
+    noisy = noisy + _addRON(noisy, ron, 0)
     return noisy
 
+def addNoise(data, QE, read_noise, ndark, fps, activate_photon_noise, activate_detector_noise, enf=None):
+    if activate_photon_noise:
+        if activate_detector_noise:
+            noisy = addPhotonNoise(data, QE, enf)
+        else:
+            noisy = addPhotonNoise(data, 1, enf)
+    else:
+        noisy = data
+        
+    if activate_detector_noise:
+        if activate_photon_noise:
+            noisy = addDetectorNoise(noisy, read_noise, ndark, fps, enf)
+        else:
+            noisy = addDetectorNoise(noisy*QE, read_noise, ndark, fps, enf)
+
+    return noisy    
+    
 def measurePhase(data, wl):
     di = data[0] - data[2]
     denom = (data[0]+data[2]-2*data[1])
@@ -225,11 +250,7 @@ def measurePhase2(data, wl):
     denom = (data[0]+data[2]-2*data[1])
     di2 = di / denom
     dphi = cp.arctan(-3**0.5*di2)
-    pairs = [(i, j) for i,j in combinations(np.arange(wl.size), 2)]
-    # pairs = pairs[:wl.size-1]
-    
-    # pij = cp.array([(dphi[i] - dphi[j]) / (2*np.pi*(1/wl[i] - 1/wl[j])) for i,j in pairs], dtype=cp.float32)
-    # ddphi = cp.array([abs(dphi[i] - dphi[j]) for i,j in pairs], dtype=cp.float32)
+
     pij = cp.array([(dphi[i+1] - dphi[i]) / (2*np.pi*(1/wl[i+1] - 1/wl[i])) for i in range(wl.size-1)], dtype=cp.float32)
     ddphi = cp.array([abs(dphi[i] - dphi[i+1]) for i in range(wl.size-1)], dtype=cp.float32)
     
@@ -265,7 +286,8 @@ def selectCoupler(name):
         return 1/2**0.5 * cp.array([[1.0                  , cp.exp(-1j* cp.pi/2)],
                                     [cp.exp(-1j* cp.pi/2)  , 1.],
                                     [0.                   , 0.]], dtype=cp.complex64)
-        
+ 
+    
 if __name__ == '__main__':
     import matplotlib.pyplot as plt
     
