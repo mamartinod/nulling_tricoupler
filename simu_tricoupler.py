@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+# np.array#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
 Created on Sat Feb 13 20:05:38 2021
@@ -13,8 +13,8 @@ For the latter, properties of C-Red 1 are considered (but the ENF which is easy
 The timeline of the simulation is the delay of the servo loop so that the correction
 measured at iteration N is applied at N+1.
 
-The outputs of the tricoupler allows to recover the null 
-(direct reading of the central output), the phase and the antinull by 
+The outputs of the tricoupler allows to recover the null
+(direct reading of the central output), the phase and the antinull by
 combinations of the 3 outputs.
 FYI: the cross-product I1*I2 can be recovered as well (not needed here)
 
@@ -22,7 +22,7 @@ Interferometric equations for achromatic balanced tricoupler are simple:
     central output: classic interferometric equation with all terms divided by 3
     left: same as central with -2pi/3 shift
     right: same as central with +2pi/3 shift
-    
+
 The script can be improved by adding chromaticity in the tricoupler and
 the codirectional coupler.
 
@@ -30,17 +30,17 @@ How to use it:
     * Change the values in **Settings** depending on what you want to simulate
     * Run
     * For finer tuning, check the other parameters of the other sections, especially the servo loop one to deactivate the servo if you don't care.
-    
+
 About the turbulence:
     * a Kolmogorov - Von Karman phase screen is created
     * the screen is shifted after each element of time
     * to avoid wrapping, a new mask is created once the previous mask is entirely rolled
-    
+
 About the detector:
     * 2 detectors are available: C-Red 1 and C-Red 2, uncomment the desired one and comment the other
     * photon noise, dark current and read-out noise is simulated
     * the phase screen is in distance unit which is achromatic, on the contrary of phase unit which is chromatic (\propto 2\pi / \lambda)
-    
+
 About phase of the wavefronts:
     * average value of the phase screen in a sub-pupil gives the atmospheric piston of this pupil
     * the differential piston refers to the difference of pistons between pupils A and B
@@ -55,7 +55,7 @@ About the combiners:
 from timeit import default_timer as timer
 import numpy as np
 import matplotlib.pyplot as plt
-import cupy as cp
+# import cupy as cp
 import simu_tricoupler_lib as lib
 from astropy.time import Time
 from datetime import datetime
@@ -64,15 +64,15 @@ from datetime import datetime
 # Settings
 # =============================================================================
 # To save data
-save = False 
+save = False
 # To simulate photon noise
-activate_photon_noise = False 
+activate_photon_noise = False
 # To simulate the detector noise
-activate_detector_noise = False 
+activate_detector_noise = False
 # To simulate the flux of a star, otherwise the incoming fluxes are equal to 1
-activate_flux = False 
+activate_flux = False
 # Use an achromatic phase mask instead of air-delaying (chromatic) one beam with respect to the other
-activate_achromatic_phase_shift = False 
+activate_achromatic_phase_shift = False
 # To activate turbulence
 activate_turbulence = True
 # Use of photometric outputs
@@ -124,7 +124,7 @@ timestep = 1e-4 # time step of the simulation (in second)
 time_obs = 0.1 # duration of observation (in second)
 
 # Let's define the axe of time on which any event will happened (turbulence, frame reading, servo loop)
-timeline = np.around(np.arange(0, time_obs+delay, timestep, dtype=cp.float32), int(-np.log10(timestep)))
+timeline = np.around(np.arange(0, time_obs+delay, timestep, dtype=np.float32), int(-np.log10(timestep)))
 
 # Detector is CRED-1
 read_noise = 0.7 # Read noise of the detector (in e-)
@@ -142,14 +142,14 @@ enf = 1. #1.25 # Excess noise factor due to the amplification process
 # =============================================================================
 if activate_photometric_output:
     # Fractions of intensity sent to photometric output
-    coeff_tri = 0.25 
+    coeff_tri = 0.25
     coeff_bi = 1/3.
 else:
-    coeff_tri = 0. 
+    coeff_tri = 0.
     coeff_bi = 0.
-    
+
 '''
-Transfer matrix of a tricoupler. Center row is the null output, 
+Transfer matrix of a tricoupler. Center row is the null output,
 phase and antinull is recovered from linear combinations of the three outputs (rows)
 
 Structure:
@@ -159,27 +159,27 @@ Structure:
     4th row = photometric output A
     5th row = photometric output B
 '''
-tricoupler = cp.asarray(np.array([[1/3**0.5                         , 1/3**0.5 * np.exp(1j* 2*np.pi/3)  , 0., 0.],
+tricoupler = np.asarray(np.array([[1/3**0.5                         , 1/3**0.5 * np.exp(1j* 2*np.pi/3)  , 0., 0.],
                                   [1/3**0.5 * np.exp(1j* 2*np.pi/3) , 1/3**0.5 * np.exp(1j* 2*np.pi/3)  , 0., 0.],
                                   [1/3**0.5 * np.exp(1j* 2*np.pi/3) , 1/3**0.5                          , 0., 0.],
                                   [0.                               , 0.                                , 1., 0.],
                                   [0.                               , 0.                                , 0., 1.]], dtype=np.complex64))
 
 # Splitter before combining the beams to get the photometric tap
-tri_splitter = cp.array([[1-coeff_tri, 0.],
+tri_splitter = np.array([[1-coeff_tri, 0.],
                          [0.         , 1-coeff_tri],
                          [coeff_tri  , 0.],
-                         [0.         , coeff_tri]], dtype=cp.float32)
+                         [0.         , coeff_tri]], dtype=np.float32)
 # The coefficients below are given for intensities although we deal with amplitude of wavefront
 # so a square root must be applied to them
-tri_splitter = tri_splitter**0.5 
+tri_splitter = tri_splitter**0.5
 
 # Total combiner
 combiner_tri = tricoupler@tri_splitter
 
 
 '''
-Transfer matrix of a directional coupler. 
+Transfer matrix of a directional coupler.
 One output is the nulled signal, the other is the antinulled.
 
 Structure:
@@ -189,17 +189,17 @@ Structure:
     4th row = photometric output A
     5th row = photometric output B
 '''
-bicoupler = cp.asarray(np.array([[1.0/2**0.5                        , 1.0/2**0.5 * np.exp(-1j* np.pi/2) , 0., 0.],
+bicoupler = np.asarray(np.array([[1.0/2**0.5                        , 1.0/2**0.5 * np.exp(-1j* np.pi/2) , 0., 0.],
                                  [1.0/2**0.5 * np.exp(-1j* np.pi/2) , 1.0/2**0.5                        , 0., 0.],
                                  [0.0                               , 0.0                               , 0., 0.],
                                  [0.0                               , 0.                                , 1., 0.],
                                  [0.                                , 0.                                , 0., 1.]], dtype=np.complex64))
 
 # Splitter before combining the beams to get the photometric tap
-bi_splitter = cp.array([[1-coeff_bi , 0.],
+bi_splitter = np.array([[1-coeff_bi , 0.],
                          [0.        , 1-coeff_bi],
                          [coeff_bi  , 0.],
-                         [0.        , coeff_bi]], dtype=cp.float32)
+                         [0.        , coeff_bi]], dtype=np.float32)
 
 # The coefficients below are given for intensities although we deal with amplitude of wavefront
 # so a square root must be applied to them
@@ -221,8 +221,8 @@ baselinep = baseline / tdiam * sz
 # =============================================================================
 servo_gain = 0.
 servo_int = 0.# 1.#0.05 # 0: no fringe tracking, 1.: fringe trcking at high flux, 0.05: fringe tracking at low flux (SNR<=2)
-err_int = cp.array([0.], dtype=cp.float32)
-diff_piston_command = cp.array([0.], dtype=cp.float32)
+err_int = np.array([0.], dtype=np.float32)
+diff_piston_command = np.array([0.], dtype=np.float32)
 
 if not activate_achromatic_phase_shift:
     DIFF_PISTON_REF = wavel / 2
@@ -231,7 +231,7 @@ if not activate_achromatic_phase_shift:
     achromatic_phasemask_cocoupler[:] = 0.
 else:
     DIFF_PISTON_REF = 0.
-    DIFF_PISTON_REFBI = 0.    
+    DIFF_PISTON_REFBI = 0.
 
 # =============================================================================
 # Flux parameters
@@ -253,7 +253,7 @@ print('Star photo-electrons', star_photons*0.75*QE, (star_photons*0.75*QE)**0.5)
 # =============================================================================
 """
 Phase mask may be completely shifted.
-To prevent aliasing, a new mask is created and the time to calculate the shift 
+To prevent aliasing, a new mask is created and the time to calculate the shift
 is offseted.
 """
 TIME_OFFSET = 0. # time offset of the shift of the mask after creation of a new one
@@ -267,19 +267,19 @@ debug = []
 start = timer()
 
 # Create the spectral dispersion
-wl = cp.arange(wavel-bandwidth/2, wavel+bandwidth/2, dwl, dtype=cp.float32)
+wl = np.arange(wavel-bandwidth/2, wavel+bandwidth/2, dwl, dtype=np.float32)
 
 # Create the sub-pupil
 pupil = lib.createSubPupil(sz, int(subpup_diamp//2), baselinep, 5, norm=False)
-pupil = cp.array(pupil , dtype=cp.float32)
+pupil = np.array(pupil , dtype=np.float32)
 
 # Create the phase screen.
 if activate_turbulence:
     phs_screen = lib.generatePhaseScreen(wavel_r0, sz*oversz, ll, r0, L0, fc=fc_scex, correc=ao_correc, pdiam=tdiam, seed=seed)
-    phs_screen = cp.array(phs_screen, dtype=cp.float32)
+    phs_screen = np.array(phs_screen, dtype=np.float32)
 else:
-    phs_screen = cp.zeros((sz*oversz, sz*oversz), dtype=cp.float32)
-    
+    phs_screen = np.zeros((sz*oversz, sz*oversz), dtype=np.float32)
+
 # =============================================================================
 # Initiate storage lists
 # =============================================================================
@@ -304,9 +304,9 @@ time_fr = []
 time_ft = []
 
 
-i_out = cp.zeros((5, wl.size), dtype=cp.float32)
-i_out_noft = cp.zeros((5, wl.size), dtype=cp.float32)
-i_out_bi = cp.zeros((5, wl.size), dtype=cp.float32)
+i_out = np.zeros((5, wl.size), dtype=np.float32)
+i_out_noft = np.zeros((5, wl.size), dtype=np.float32)
+i_out_bi = np.zeros((5, wl.size), dtype=np.float32)
 
 # =============================================================================
 # Loop over simulated time
@@ -317,99 +317,99 @@ for t in timeline:
         if seed != None:
             seed += 20
         phs_screen = lib.generatePhaseScreen(wavel_r0, sz*oversz, ll, r0, L0, fc=fc_scex, correc=9, pdiam=tdiam, seed=None)
-        phs_screen = cp.array(phs_screen, dtype=cp.float32)
+        phs_screen = np.array(phs_screen, dtype=np.float32)
         TIME_OFFSET = t
 
     shifts.append(xyshift)
     # We stay in phase space hence the simple multiplication below to crop the wavefront.
     phs_pup = pupil * phs_screen_moved[phs_screen_moved.shape[0]//2-sz//2:phs_screen_moved.shape[0]//2+sz//2,\
                                        phs_screen_moved.shape[1]//2-sz//2:phs_screen_moved.shape[1]//2+sz//2]
-    
+
     # Measure the piston of the subpupils
-    piston_pupA = cp.mean(phs_pup[:,:sz//2][pupil[:,:sz//2]!=0], keepdims=True)
-    piston_pupB = cp.mean(phs_pup[:,sz//2:][pupil[:,sz//2:]!=0], keepdims=True)
-    
+    piston_pupA = np.mean(phs_pup[:,:sz//2][pupil[:,:sz//2]!=0], keepdims=True)
+    piston_pupB = np.mean(phs_pup[:,sz//2:][pupil[:,sz//2:]!=0], keepdims=True)
+
     # Measure the differential atmospheric piston
     diff_piston_atm = piston_pupA - piston_pupB
     diff_pistons_atm.append(diff_piston_atm)
 
     # Total differential piston, including the instrumental air-delay between the beams
-    diff_piston = cp.array([DIFF_PISTON_REF + diff_piston_atm[0]], dtype=cp.float32) # pupil A - pupil B
+    diff_piston = np.array([DIFF_PISTON_REF + diff_piston_atm[0]], dtype=np.float32) # pupil A - pupil B
     diff_piston_corrected = diff_piston - diff_piston_command[0]
 
 
-    injection = cp.array([lib.calculateInjection(phs_pup[:,:sz//2][pupil[:,:sz//2]!=0], wl), \
+    injection = np.array([lib.calculateInjection(phs_pup[:,:sz//2][pupil[:,:sz//2]!=0], wl), \
                           lib.calculateInjection(phs_pup[:,sz//2:][pupil[:,sz//2:]!=0], wl)])
     injections.append(injection)
 
     # Input wavefronts
-    a_in = cp.array([cp.exp(1j*2*cp.pi/wl*(piston_pupA + diff_piston_corrected) + 1j*achromatic_phasemask_tricoupler[0]),\
-                     cp.exp(1j*2*cp.pi/wl*piston_pupB                           + 1j*achromatic_phasemask_tricoupler[1])],\
-                    dtype=cp.complex64)
+    a_in = np.array([np.exp(1j*2*np.pi/wl*(piston_pupA + diff_piston_corrected) + 1j*achromatic_phasemask_tricoupler[0]),\
+                     np.exp(1j*2*np.pi/wl*piston_pupB                           + 1j*achromatic_phasemask_tricoupler[1])],\
+                    dtype=np.complex64)
     if activate_flux:
         a_in *= injection**0.5 * star_photons**0.5
     a_out = combiner_tri@a_in # Deduce the outcoming wavefront after the integrated-optics device
-    i_out += cp.abs(a_out)**2
-    
+    i_out += np.abs(a_out)**2
+
     # Same but with no fringe tracking
-    a_in_noft = cp.array([cp.exp(1j*2*cp.pi/wl*(piston_pupA)    + 1j*achromatic_phasemask_tricoupler[0]),\
-                          cp.exp(1j*2*cp.pi/wl*piston_pupB      + 1j*achromatic_phasemask_tricoupler[1])],\
-                         dtype=cp.complex64)
+    a_in_noft = np.array([np.exp(1j*2*np.pi/wl*(piston_pupA)    + 1j*achromatic_phasemask_tricoupler[0]),\
+                          np.exp(1j*2*np.pi/wl*piston_pupB      + 1j*achromatic_phasemask_tricoupler[1])],\
+                         dtype=np.complex64)
     if activate_flux:
-        a_in_noft *= injection**0.5 * star_photons**0.5 
+        a_in_noft *= injection**0.5 * star_photons**0.5
     a_out_noft = combiner_tri@a_in_noft
-    i_out_noft += cp.abs(a_out_noft)**2  
+    i_out_noft += np.abs(a_out_noft)**2
 
     # Same but with codirectional coupler
-    diff_piston_bi = cp.array([DIFF_PISTON_REFBI + diff_piston_atm[0]], dtype=cp.float32) # pupil 1 - pupil 2
+    diff_piston_bi = np.array([DIFF_PISTON_REFBI + diff_piston_atm[0]], dtype=np.float32) # pupil 1 - pupil 2
     diff_pistons_bi.append(diff_piston_bi)
-    a_in_bi = cp.array([cp.exp(1j*2*cp.pi/wl*(piston_pupA + diff_piston_bi) + 1j*achromatic_phasemask_cocoupler[0]),\
-                        cp.exp(1j*2*cp.pi/wl*(piston_pupB)                  + 1j*achromatic_phasemask_cocoupler[1])],\
-                       dtype=cp.complex64)    
+    a_in_bi = np.array([np.exp(1j*2*np.pi/wl*(piston_pupA + diff_piston_bi) + 1j*achromatic_phasemask_cocoupler[0]),\
+                        np.exp(1j*2*np.pi/wl*(piston_pupB)                  + 1j*achromatic_phasemask_cocoupler[1])],\
+                       dtype=np.complex64)
     if activate_flux:
-        a_in_bi *= injection**0.5 * star_photons**0.5 
+        a_in_bi *= injection**0.5 * star_photons**0.5
     a_out_bi = combiner_bi@a_in_bi
-    i_out_bi += cp.abs(a_out_bi)**2
-    
+    i_out_bi += np.abs(a_out_bi)**2
+
     if count_dit < dit/timestep:
         count_dit += 1
     else:
         # print('Acq frame', count_dit, count_delay, t)
-        i_out /= count_dit 
+        i_out /= count_dit
         data.append(i_out)
         noisy_i_out = lib.addNoise(i_out, QE, read_noise, ndark, fps, activate_photon_noise, activate_detector_noise, enf)
         noisy_data.append(noisy_i_out)
-    
+
         # No fringe tracking
         i_out_noft /= count_dit
         data_noft.append(i_out_noft)
         noisy_i_out_noft = lib.addNoise(i_out_noft, QE, read_noise, ndark, fps, activate_photon_noise, activate_detector_noise, enf)
         noisy_data_noft.append(noisy_i_out_noft)
-        
+
         # Codirectional coupler
         i_out_bi /= count_dit
-        data_bi.append(i_out_bi)            
+        data_bi.append(i_out_bi)
         noisy_i_out_bi = lib.addNoise(i_out_bi, QE, read_noise, ndark, fps, activate_photon_noise, activate_detector_noise, enf)
         noisy_data_bi.append(noisy_i_out_bi)
-            
+
         # Store some data
         diff_pistons_fr.append(diff_piston_atm)
         injections_fr.append(injection)
         time_fr.append(t)
-        
+
         if count_delay == count_dit: # Capture the first frame of the double cycles on DIT and Delay to send to fringe trakcer
-            noisy_i_out_toft = cp.array(noisy_i_out, dtype=cp.float32)
-            noisy_i_out_noft_toft = cp.array(noisy_i_out_noft, dtype=cp.float32)
-            diff_piston_toft = cp.array(diff_piston_atm)
-            injection_toft = cp.array(injection)
+            noisy_i_out_toft = np.array(noisy_i_out, dtype=np.float32)
+            noisy_i_out_noft_toft = np.array(noisy_i_out_noft, dtype=np.float32)
+            diff_piston_toft = np.array(diff_piston_atm)
+            injection_toft = np.array(injection)
 
         # Reinit the cycle of integration of a frame
-        i_out = cp.zeros_like(i_out)
-        i_out_noft = cp.zeros_like(i_out_noft)
-        i_out_bi = cp.zeros_like(i_out_bi)        
+        i_out = np.zeros_like(i_out)
+        i_out_noft = np.zeros_like(i_out_noft)
+        i_out_bi = np.zeros_like(i_out_bi)
         count_dit = 1
-        
-        
+
+
     # if couplertype == 'tricoupler':
     if count_delay < delay/timestep:
         count_delay += 1
@@ -421,27 +421,27 @@ for t in timeline:
         diff_piston_error = diff_piston_meas - DIFF_PISTON_REF
         err_int += diff_piston_error
         diff_piston_command = servo_int * err_int + servo_gain * diff_piston_error
-        
+
         diff_piston_meas_noft = lib.measurePhase3(noisy_i_out_noft_toft, wl)
         diff_pistons_measured_noft.append(diff_piston_meas_noft)
-        
+
         diff_pistons_ft.append(diff_piston_toft)
         injections_ft.append(injection_toft)
         time_ft.append(t)
         count_delay = 1
-            
+
 # =============================================================================
 # Format data
 # =============================================================================
-diff_pistons_atm = cp.asnumpy(cp.array(diff_pistons_atm))
-diff_pistons_bi = cp.asnumpy(cp.array(diff_pistons_bi))
-diff_pistons_ft = cp.asnumpy(cp.array(diff_pistons_ft))
-diff_pistons_fr = cp.asnumpy(cp.array(diff_pistons_fr))
-diff_pistons_measured = cp.asnumpy(cp.array(diff_pistons_measured))
-diff_pistons_measured_noft = cp.asnumpy(cp.array(diff_pistons_measured_noft))
-injections = cp.asnumpy(cp.array(injections))
-injections_ft = cp.asnumpy(cp.array(injections_ft))
-injections_fr = cp.asnumpy(cp.array(injections_fr))
+diff_pistons_atm = np.array(diff_pistons_atm)
+diff_pistons_bi = np.array(diff_pistons_bi)
+diff_pistons_ft = np.array(diff_pistons_ft)
+diff_pistons_fr = np.array(diff_pistons_fr)
+diff_pistons_measured = np.array(diff_pistons_measured)
+diff_pistons_measured_noft = np.array(diff_pistons_measured_noft)
+injections = np.array(injections)
+injections_ft = np.array(injections_ft)
+injections_fr = np.array(injections_fr)
 
 shifts = np.array(shifts)
 time_fr = np.array(time_fr)
@@ -454,12 +454,12 @@ diff_pistons_fr = np.squeeze(diff_pistons_fr)
 diff_pistons_measured = np.squeeze(diff_pistons_measured)
 diff_pistons_measured_noft = np.squeeze(diff_pistons_measured_noft)
 
-data = cp.asnumpy(cp.array(data))
-noisy_data = cp.asnumpy(cp.array(noisy_data))
-data_bi = cp.asnumpy(cp.array(data_bi))
-data_noft = cp.asnumpy(cp.array(data_noft))
-noisy_data_noft = cp.asnumpy(cp.array(noisy_data_noft))
-noisy_data_bi = cp.asnumpy(cp.array(noisy_data_bi))
+data = np.array(data)
+noisy_data = np.array(noisy_data)
+data_bi = np.array(data_bi)
+data_noft = np.array(data_noft)
+noisy_data_noft = np.array(noisy_data_noft)
+noisy_data_bi = np.array(noisy_data_bi)
 
 data = np.transpose(data, (1,0,2))
 data_noft = np.transpose(data_noft, (1,0,2))
@@ -498,7 +498,7 @@ if save:
              noisy_data_bi=noisy_data_bi, diff_pistons_atm=diff_pistons_atm, diff_pistons_fr=diff_pistons_fr,
              diff_pistons_measured=diff_pistons_measured, diff_pistons_measured_noft=diff_pistons_measured_noft,
              diff_pistons_ft=diff_pistons_ft, null_depth=null_depth, null_depth_noft=null_depth_noft,
-             null_depth_bi=null_depth_bi, det_charac=np.array([QE, read_noise, ndark, fps]), 
+             null_depth_bi=null_depth_bi, det_charac=np.array([QE, read_noise, ndark, fps]),
              servo=np.array([delay, servo_gain, servo_int]), atm=np.array([r0, wind_speed, angle]))
 
 # =============================================================================
