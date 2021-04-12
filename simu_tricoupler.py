@@ -63,6 +63,7 @@ from datetime import datetime
 # Teresa's imports
 import sys
 from tqdm import tqdm
+import time
 
 # =============================================================================
 # Settings
@@ -195,62 +196,55 @@ Structure:
 
 
 # =============================================================================
-# Coupling coefficients (Teresa)
+# Coupling coefficients
 # =============================================================================
 
-chromaticity = False # can move this switch if you want. NB if set to False, code should work exactly as the original (achromatic) case. 
+chromaticity = False 
 if chromaticity: 
-    # 1. symmetric coupler: kappa_12 = kappa_21 = kappa
+    # we assume symmetric coupler: kappa_12 = kappa_21 = kappa
     kappa = np.linspace(0, 1, 40)
+    # kappa[:] = 0.5
     z = np.zeros(40)
     ones = np.ones(40)
     
-    bicoupler = cp.asarray(np.array([[kappa                        , kappa * np.exp(-1j* np.pi/2) , z   , z   ],
-                                     [kappa * np.exp(-1j* np.pi/2) , kappa                        , z   , z   ],
+    bicoupler = cp.asarray(np.array([[(1-kappa)**0.5                      , kappa**0.5 * np.exp(-1j* np.pi/2) , z   , z   ],
+                                     [kappa**0.5 * np.exp(-1j* np.pi/2) , (1-kappa)**0.5                        , z   , z   ],
                                      [z                            , z                            , z   , z   ],
                                      [z                            , z                            , ones, z   ],
                                      [z                            , z                            , z   , ones]], dtype=np.complex64))
 else: 
-    ################################ old code ########################################
     bicoupler = cp.asarray(np.array([[1.0/2**0.5                        , 1.0/2**0.5 * np.exp(-1j* np.pi/2) , 0., 0.],
                                       [1.0/2**0.5 * np.exp(-1j* np.pi/2) , 1.0/2**0.5                        , 0., 0.],
                                       [0.0                               , 0.0                               , 0., 0.],
                                       [0.0                               , 0.                                , 1., 0.],
                                       [0.                                , 0.                                , 0., 1.]], dtype=np.complex64))
-    ##################################################################################
 
 
 
 # =============================================================================
-# Splitting coefficients (Teresa)
+# Splitting coefficients
 # =============================================================================
 
 
 if chromaticity: 
     alpha = np.linspace(0,1,40)
-    # re-use dummy arrays of ones and zeroes from above
-    # NOTE rename variable 'z' to something more intuitive
+    # alpha[:] = 1/3.
     
-    bi_splitter = cp.array([[1-alpha , z      ],
-                            [z       , 1-alpha],
-                            [alpha   , z      ],
-                            [z       , alpha  ]], dtype=cp.float32)
+    bi_splitter = cp.array([[(1-alpha) , z      ],
+                            [z       , (1-alpha)],
+                            [(alpha)  , z      ],
+                            [z       , (alpha)  ]], dtype=cp.float32)
     
     # The coefficients below are given for intensities although we deal with amplitude of wavefront
     # so a square root must be applied to them
     bi_splitter = bi_splitter**0.5
     
-    # Total combiner (matrix product of coupler with splitter): 
-        # 1. need to re-shuffle axes of both matrices to use np.matmul() 
-    bicoupler = np.transpose(bicoupler, (2, 0, 1))
-    bi_splitter = np.transpose(bi_splitter, (2, 0, 1))
-        # 2. matrix multiplication
-    combiner_bi = cp.matmul(bicoupler, bi_splitter)
-        # 3. re-shuffling axes to their original location
-    combiner_bi = np.transpose(combiner_bi, (1, 2, 0))
+    # Total combiner
+    combiner_bi = cp.einsum('ijk,jlk->ilk', bicoupler, bi_splitter)
+    # performs matrix multiplication while keeping indices in the right order 
+    
 
 else: 
-    ######################## old code #########################################3
     # Splitter before combining the beams to get the photometric tap
     bi_splitter = cp.array([[1-coeff_bi , 0.],
                               [0.        , 1-coeff_bi],
@@ -263,8 +257,6 @@ else:
     
     # Total combiner
     combiner_bi = bicoupler@bi_splitter
-    ############################################################################
-
 
 # =============================================================================
 # Convert physical quantities in pixel
@@ -425,30 +417,19 @@ for t in tqdm(timeline):
     a_in_bi = cp.array([cp.exp(1j*2*cp.pi/wl*(piston_pupA + diff_piston_bi) + 1j*achromatic_phasemask_cocoupler[0]),\
                         cp.exp(1j*2*cp.pi/wl*(piston_pupB)                  + 1j*achromatic_phasemask_cocoupler[1])],\
                        dtype=cp.complex64)
-    
-    # temp- seeing how the input intensities into both waveguides are the same
-    # plt.plot(cp.ndarray.get(wl), cp.ndarray.get(abs(a_in_bi[0])), label='input 1')
-    # plt.plot(cp.ndarray.get(wl), cp.ndarray.get(a_in_bi[1]), label='input 2')
-    # plt.ylim(0.95,1.05)
-    # plt.xlabel("wavelength")
-    # plt.ylabel("input intensity")
-    # plt.legend(loc='best')
-
-    # sys.exit()
-        
-    
+      
         
     if activate_flux:
         a_in_bi *= injection**0.5 * star_photons**0.5
     
         
-    
-    ########################################## implementing chromaticity #################
-    
     if chromaticity: 
-        a_out_bi = combiner_bi@a_in_bi
+        a_out_bi = cp.einsum('ijk,jk->ik', combiner_bi, a_in_bi)
+        # multiplies the second, bzw. first axes and keeps the wavelength axes
+        
     else: 
         a_out_bi = combiner_bi@a_in_bi
+    
         
     
     i_out_bi += cp.abs(a_out_bi)**2
@@ -554,11 +535,15 @@ noisy_data_noft = np.transpose(noisy_data_noft, (1,0,2))
 noisy_data_bi = np.transpose(noisy_data_bi, (1,0,2))
 
 stop = timer()
-print('Total duration', stop - start)
+print('Total duration', stop - start, "seconds")
 
 # =============================================================================
 # Calculate other quantities
 # =============================================================================
+
+# temp - Teresa added this (suppresses RuntimeWarning: invalid value encountered in true_divide)
+np.seterr(divide='ignore', invalid='ignore')
+
 antinull = 2/3 * (noisy_data[0] + noisy_data[2]) - 1/3 * noisy_data[1]
 null_depth = noisy_data[1] / antinull
 
@@ -589,14 +574,14 @@ if save:
 # =============================================================================
 # Display and plot
 # =============================================================================
-print('Std piston no FT (input, measured)', diff_pistons_atm.std()/wavel, diff_pistons_measured_noft.std()/wavel)
-print('Std piston with FT', diff_pistons_measured.std()/wavel)
-print('Med and std null depth with FT', np.median(null_depth.mean(1)[(null_depth.mean(1)>=0.)&(null_depth.mean(1)<=1)]), np.std(null_depth.mean(1)[(null_depth.mean(1)>=0.)&(null_depth.mean(1)<=1)]))
-print('Med and std null depth no FT', np.median(null_depth_noft.mean(1)[(null_depth_noft.mean(1)>=0.)&(null_depth_noft.mean(1)<=1)]), np.std(null_depth_noft.mean(1)[(null_depth_noft.mean(1)>=0.)&(null_depth_noft.mean(1)<=1)]))
-print('Med and std null depth with BI', np.median(null_depth_bi.mean(1)[(null_depth_bi.mean(1)>=0.)&(null_depth_bi.mean(1)<=1)]), np.std(null_depth_bi.mean(1)[(null_depth_bi.mean(1)>=0.)&(null_depth_bi.mean(1)<=1)]))
-print('---')
-print('Med and std null depth with FT', np.median(null_depth.mean(1)), np.std(null_depth.mean(1)))
-print('Med and std null depth no FT', np.median(null_depth_noft.mean(1)), np.std(null_depth_noft.mean(1)))
+# print('Std piston no FT (input, measured)', diff_pistons_atm.std()/wavel, diff_pistons_measured_noft.std()/wavel)
+# print('Std piston with FT', diff_pistons_measured.std()/wavel)
+# print('Med and std null depth with FT', np.median(null_depth.mean(1)[(null_depth.mean(1)>=0.)&(null_depth.mean(1)<=1)]), np.std(null_depth.mean(1)[(null_depth.mean(1)>=0.)&(null_depth.mean(1)<=1)]))
+# print('Med and std null depth no FT', np.median(null_depth_noft.mean(1)[(null_depth_noft.mean(1)>=0.)&(null_depth_noft.mean(1)<=1)]), np.std(null_depth_noft.mean(1)[(null_depth_noft.mean(1)>=0.)&(null_depth_noft.mean(1)<=1)]))
+# print('Med and std null depth with BI', np.median(null_depth_bi.mean(1)[(null_depth_bi.mean(1)>=0.)&(null_depth_bi.mean(1)<=1)]), np.std(null_depth_bi.mean(1)[(null_depth_bi.mean(1)>=0.)&(null_depth_bi.mean(1)<=1)]))
+# print('---')
+# print('Med and std null depth with FT', np.median(null_depth.mean(1)), np.std(null_depth.mean(1)))
+# print('Med and std null depth no FT', np.median(null_depth_noft.mean(1)), np.std(null_depth_noft.mean(1)))
 print('Med and std null depth with BI', np.median(null_depth_bi.mean(1)), np.std(null_depth_bi.mean(1)))
 
 # # if couplertype == 'tricoupler':
@@ -668,18 +653,21 @@ print('Med and std null depth with BI', np.median(null_depth_bi.mean(1)), np.std
 # plt.ylabel('Null depth')
 
 
-# Teresa added this to plot null depth over wavelength - NOTE NOT ACCURATE YET
-
-print("Wavelength range: ")
-print(wl)
-left_out = noisy_data_bi[0]
-right_out = noisy_data_bi[1]
-
+# Plotting interferometric outputs wrt wavelength
 plt.figure(7)
-# plt.plot(cp.ndarray.get(wl), left_out.mean(0), '+', label='Left waveguide output')
-# plt.plot(cp.ndarray.get(wl), right_out.mean(0), '*', label='Right waveguide output')
-plt.plot(cp.ndarray.get(wl), left_out[0], '+', label='Left waveguide output')
-plt.plot(cp.ndarray.get(wl), right_out[0], '*', label='Right waveguide output')
+plt.plot(cp.ndarray.get(wl), np.median(noisy_data_bi[0], axis=0), '+', label='Null')
+plt.plot(cp.ndarray.get(wl), np.median(antinull_bi, axis=0), '*', label='Antinull')
+plt.plot(cp.ndarray.get(wl), np.median(antinull_bi, axis=0) + np.median(noisy_data_bi[0], axis=0))
 plt.legend(loc='best')
 plt.xlabel('Wavelength, lambda')
-plt.ylabel('Intensity (not normalised?)')
+plt.ylabel('Intensity')
+
+# Plotting intensity (photometric, interferometric, total) wrt wavelength 
+plt.figure(8)
+plt.plot(cp.ndarray.get(wl), np.median(noisy_data_bi[3], axis=0), label='photometric 1')
+plt.plot(cp.ndarray.get(wl), np.median(noisy_data_bi[4], axis=0), label = 'photometric 2')
+plt.plot(cp.ndarray.get(wl), np.median(antinull_bi, axis=0) + np.median(noisy_data_bi[0], axis=0), label='interferometric')
+plt.plot(cp.ndarray.get(wl), np.median(antinull_bi, axis=0) + np.median(noisy_data_bi[0], axis=0) + np.median(noisy_data_bi[3], axis=0) + np.median(noisy_data_bi[4], axis=0), label='total')
+plt.legend(loc='best')
+plt.xlabel('Wavelength, lambda')
+plt.ylabel('Intensity')
