@@ -64,12 +64,13 @@ from datetime import datetime
 import sys
 from tqdm import tqdm
 import time
+import h5py
 
 # =============================================================================
 # Settings
 # =============================================================================
 # To save data
-save = False
+save = True
 # To simulate photon noise
 activate_photon_noise = False
 # To simulate the detector noise
@@ -106,6 +107,13 @@ wavel_r0 = 0.5e-6 # wavelength where r0 is measured (in meters)
 wavel = 1.6e-6 # Wavelength of observation (in meter)
 bandwidth = 0.2e-6 # Bandwidth around the wavelength of observation (in meter)
 dwl = 5e-9 # Width of one spectral channel (in meter)
+
+if 1 == 0:
+    wavel = 0
+    bandwidth = 0
+    dwl = 0
+
+# sys.exit()
 
 meter2pixel = sz / tdiam # scale factor converting the meter-size in pixel, in pix/m
 ao_correc = 8. # How well the AO flattens the wavefront
@@ -196,23 +204,79 @@ Structure:
 
 
 # =============================================================================
-# Coupling coefficients
+# Coupling and splitting coefficients for chromatic case 
 # =============================================================================
 
-chromaticity = False 
-if chromaticity: 
-    # we assume symmetric coupler: kappa_12 = kappa_21 = kappa
-    kappa = np.linspace(0, 1, 40)
-    # kappa[:] = 0.5
-    z = np.zeros(40)
-    ones = np.ones(40)
+chromaticity = True
+one_baseline_data = False
+if one_baseline_data:
+    in_file = h5py.File("one_baseline_data.hdf5", 'r')
+
+    wl = cp.array(in_file['wl']) * 1e-9
+    alpha_b1 = np.array(in_file['alpha_b1'])
+    alpha_b2 = np.array(in_file['alpha_b2'])
+    kappa_12 = np.array(in_file['kappa_12'])
+    kappa_21 = np.array(in_file['kappa_21'])
     
-    bicoupler = cp.asarray(np.array([[(1-kappa)**0.5                      , kappa**0.5 * np.exp(-1j* np.pi/2) , z   , z   ],
-                                     [kappa**0.5 * np.exp(-1j* np.pi/2) , (1-kappa)**0.5                        , z   , z   ],
+else:
+    # Contains current data from GLINT (4 beams, 6 baselines) hence need to calculate 4 splitting coeffs per beam 
+    zeta_file = h5py.File("20210322_zeta_coeff_raw.hdf5", 'r')
+
+    # null/antinull outputs for beams 1 and 2 (zeta coefficients)
+    zeta_b1_n1 = np.array(zeta_file['b1null1']) # Conversion in numpy array is mandatory to do calculations with the values
+    zeta_b1_an1 = np.array(zeta_file['b1null7'])
+    zeta_b1_n3 = np.array(zeta_file['b1null3'])
+    zeta_b1_an3 = np.array(zeta_file['b1null9'])
+    zeta_b1_n5 = np.array(zeta_file['b1null5'])
+    zeta_b1_an5 = np.array(zeta_file['b1null11'])
+
+    zeta_b2_n1 = np.array(zeta_file['b2null1']) # Conversion in numpy array is mandatory to do calculations with the values
+    zeta_b2_an1 = np.array(zeta_file['b2null7'])
+    zeta_b2_n2 = np.array(zeta_file['b2null2'])
+    zeta_b2_an2 = np.array(zeta_file['b2null8'])
+    zeta_b2_n6 = np.array(zeta_file['b2null6'])
+    zeta_b2_an6 = np.array(zeta_file['b2null12'])
+
+    # splitting ratio for beam 1 (into coupler 1)
+    alpha_b1 = (zeta_b1_n1 + zeta_b1_an1) / (1 + (zeta_b1_n1 + zeta_b1_an1) + (zeta_b1_n3 + zeta_b1_an3) + (zeta_b1_n5 + zeta_b1_an5))
+    # other splitting ratios for beam 1
+    # beta_b1 = 1 / (1 + (zeta_b1_n1 + zeta_b1_an1) + (zeta_b1_n3 + zeta_b1_an3) + (zeta_b1_n5 + zeta_b1_an5))
+    # gamma_b1 = (zeta_b1_n3 + zeta_b1_an3) / (1 + (zeta_b1_n1 + zeta_b1_an1) + (zeta_b1_n3 + zeta_b1_an3) + (zeta_b1_n5 + zeta_b1_an5))
+    # delta_b1 = (zeta_b1_n5 + zeta_b1_an5) / (1 + (zeta_b1_n1 + zeta_b1_an1) + (zeta_b1_n3 + zeta_b1_an3) + (zeta_b1_n5 + zeta_b1_an5))
+
+    # first splitting ratio for beam 2 (into coupler 1)
+    alpha_b2 = (zeta_b2_n1 + zeta_b2_an1) / (1 + (zeta_b2_n1 + zeta_b2_an1) + (zeta_b2_n2 + zeta_b2_an2) + (zeta_b2_n6 + zeta_b2_an6))
+
+    # Wavelength scale; note we cut off the highest and lowest wavelengths as zeta coeffs become messy there
+    wl = np.array(zeta_file['wl_scale']) # wavelength scale
+    within = ((wl < 1650) & (wl > 1350)) # central wavelength 1550 +/- 100 nm
+    wl = cp.array(wl[within] * 1e-9)
+
+
+    # Coupling and splitting coefficients
+    kappa_12 = (zeta_b1_an1 / zeta_b1_n1) / (1 + (zeta_b1_an1 / zeta_b1_n1))
+    kappa_21 = (zeta_b2_n1 / zeta_b2_an1) / (1 + (zeta_b2_n1 / zeta_b2_an1))
+
+    kappa_12 = kappa_12[within]
+    kappa_21 = kappa_21[within]
+    alpha_b1 = alpha_b1[within]
+    # beta_b1 = beta_b1[within]
+    # gamma_b1 = gamma_b1[within]
+    # delta_b1 = delta_b1[within]
+    alpha_b2 = alpha_b2[within]
+
+
+if chromaticity:
+    z = np.zeros(len(kappa_12))
+    ones = np.ones(len(kappa_12))
+
+    bicoupler = cp.asarray(np.array([[(1-kappa_12)**0.5                      , kappa_12**0.5 * np.exp(-1j* np.pi/2) , z   , z   ],
+                                     [kappa_21**0.5 * np.exp(-1j* np.pi/2) , (1-kappa_21)**0.5                        , z   , z   ],
                                      [z                            , z                            , z   , z   ],
                                      [z                            , z                            , ones, z   ],
                                      [z                            , z                            , z   , ones]], dtype=np.complex64))
-else: 
+
+else:
     bicoupler = cp.asarray(np.array([[1.0/2**0.5                        , 1.0/2**0.5 * np.exp(-1j* np.pi/2) , 0., 0.],
                                       [1.0/2**0.5 * np.exp(-1j* np.pi/2) , 1.0/2**0.5                        , 0., 0.],
                                       [0.0                               , 0.0                               , 0., 0.],
@@ -220,41 +284,31 @@ else:
                                       [0.                                , 0.                                , 0., 1.]], dtype=np.complex64))
 
 
+if chromaticity:
+    bi_splitter = cp.array([[(1-alpha_b1) , z      ],
+                            [z       , (1-alpha_b2)],
+                            [(alpha_b1)  , z      ],
+                            [z       , (alpha_b2)  ]], dtype=cp.complex64)
 
-# =============================================================================
-# Splitting coefficients
-# =============================================================================
-
-
-if chromaticity: 
-    alpha = np.linspace(0,1,40)
-    # alpha[:] = 1/3.
-    
-    bi_splitter = cp.array([[(1-alpha) , z      ],
-                            [z       , (1-alpha)],
-                            [(alpha)  , z      ],
-                            [z       , (alpha)  ]], dtype=cp.float32)
-    
     # The coefficients below are given for intensities although we deal with amplitude of wavefront
     # so a square root must be applied to them
     bi_splitter = bi_splitter**0.5
-    
+
     # Total combiner
     combiner_bi = cp.einsum('ijk,jlk->ilk', bicoupler, bi_splitter)
-    # performs matrix multiplication while keeping indices in the right order 
-    
+    # performs matrix multiplication while keeping indices in the right order
 
-else: 
+else:
     # Splitter before combining the beams to get the photometric tap
     bi_splitter = cp.array([[1-coeff_bi , 0.],
                               [0.        , 1-coeff_bi],
                               [coeff_bi  , 0.],
                               [0.        , coeff_bi]], dtype=cp.float32)
-    
+
     # The coefficients below are given for intensities although we deal with amplitude of wavefront
     # so a square root must be applied to them
     bi_splitter = bi_splitter**0.5
-    
+
     # Total combiner
     combiner_bi = bicoupler@bi_splitter
 
@@ -316,7 +370,9 @@ debug = []
 start = timer()
 
 # Create the spectral dispersion
-wl = cp.arange(wavel-bandwidth/2, wavel+bandwidth/2, dwl, dtype=cp.float32)
+if not chromaticity:
+    wl = cp.arange(wavel-bandwidth/2, wavel+bandwidth/2, dwl, dtype=cp.float32)
+    # if chromaticity == True, then wl is defined earlier when data file is opened 
 
 # Create the sub-pupil
 pupil = lib.createSubPupil(sz, int(subpup_diamp//2), baselinep, 5, norm=False)
@@ -396,7 +452,7 @@ for t in tqdm(timeline):
     a_in = cp.array([cp.exp(1j*2*cp.pi/wl*(piston_pupA + diff_piston_corrected) + 1j*achromatic_phasemask_tricoupler[0]),\
                      cp.exp(1j*2*cp.pi/wl*piston_pupB                           + 1j*achromatic_phasemask_tricoupler[1])],\
                     dtype=cp.complex64)
-        
+
     if activate_flux:
         a_in *= injection**0.5 * star_photons**0.5
     a_out = combiner_tri@a_in # Deduce the outcoming wavefront after the integrated-optics device
@@ -417,21 +473,22 @@ for t in tqdm(timeline):
     a_in_bi = cp.array([cp.exp(1j*2*cp.pi/wl*(piston_pupA + diff_piston_bi) + 1j*achromatic_phasemask_cocoupler[0]),\
                         cp.exp(1j*2*cp.pi/wl*(piston_pupB)                  + 1j*achromatic_phasemask_cocoupler[1])],\
                        dtype=cp.complex64)
-      
-        
+
+
+
     if activate_flux:
         a_in_bi *= injection**0.5 * star_photons**0.5
-    
-        
-    if chromaticity: 
+
+
+    if chromaticity:
         a_out_bi = cp.einsum('ijk,jk->ik', combiner_bi, a_in_bi)
         # multiplies the second, bzw. first axes and keeps the wavelength axes
-        
-    else: 
+
+    else:
         a_out_bi = combiner_bi@a_in_bi
-    
-        
-    
+
+
+
     i_out_bi += cp.abs(a_out_bi)**2
 
     if count_dit < dit/timestep:
@@ -492,8 +549,8 @@ for t in tqdm(timeline):
         injections_ft.append(injection_toft)
         time_ft.append(t)
         count_delay = 1
-        
-    
+
+
 
 # =============================================================================
 # Format data
@@ -563,13 +620,20 @@ timestamp = timestamp.replace('.', '')
 # Save data
 # =============================================================================
 if save:
-    np.savez('results/%s_mag_%s'%(timestamp, magnitude), noisy_data=noisy_data, data=data,
+    np.savez('temp_file_teresa', noisy_data=noisy_data, data=data,
              data_noft=data_noft, noisy_data_noft=noisy_data_noft, data_bi=data_bi,
              noisy_data_bi=noisy_data_bi, diff_pistons_atm=diff_pistons_atm, diff_pistons_fr=diff_pistons_fr,
              diff_pistons_measured=diff_pistons_measured, diff_pistons_measured_noft=diff_pistons_measured_noft,
              diff_pistons_ft=diff_pistons_ft, null_depth=null_depth, null_depth_noft=null_depth_noft,
              null_depth_bi=null_depth_bi, det_charac=np.array([QE, read_noise, ndark, fps]),
              servo=np.array([delay, servo_gain, servo_int]), atm=np.array([r0, wind_speed, angle]))
+    # np.savez('results/%s_mag_%s'%(timestamp, magnitude), noisy_data=noisy_data, data=data,
+    #          data_noft=data_noft, noisy_data_noft=noisy_data_noft, data_bi=data_bi,
+    #          noisy_data_bi=noisy_data_bi, diff_pistons_atm=diff_pistons_atm, diff_pistons_fr=diff_pistons_fr,
+    #          diff_pistons_measured=diff_pistons_measured, diff_pistons_measured_noft=diff_pistons_measured_noft,
+    #          diff_pistons_ft=diff_pistons_ft, null_depth=null_depth, null_depth_noft=null_depth_noft,
+    #          null_depth_bi=null_depth_bi, det_charac=np.array([QE, read_noise, ndark, fps]),
+    #          servo=np.array([delay, servo_gain, servo_int]), atm=np.array([r0, wind_speed, angle]))
 
 # =============================================================================
 # Display and plot
@@ -650,19 +714,19 @@ print('Med and std null depth with BI', np.median(null_depth_bi.mean(1)), np.std
 # plt.grid()
 # plt.legend(loc='best')
 # plt.xlabel('Time (s)')
-# plt.ylabel('Null depth')
+# plt.ylabel('Null depth')a
 
 
 # Plotting interferometric outputs wrt wavelength
 plt.figure(7)
 plt.plot(cp.ndarray.get(wl), np.median(noisy_data_bi[0], axis=0), '+', label='Null')
 plt.plot(cp.ndarray.get(wl), np.median(antinull_bi, axis=0), '*', label='Antinull')
-plt.plot(cp.ndarray.get(wl), np.median(antinull_bi, axis=0) + np.median(noisy_data_bi[0], axis=0))
+plt.plot(cp.ndarray.get(wl), np.median(antinull_bi, axis=0) + np.median(noisy_data_bi[0], axis=0), label='Total')
 plt.legend(loc='best')
 plt.xlabel('Wavelength, lambda')
 plt.ylabel('Intensity')
 
-# Plotting intensity (photometric, interferometric, total) wrt wavelength 
+# Plotting intensity (photometric, interferometric, total) wrt wavelength
 plt.figure(8)
 plt.plot(cp.ndarray.get(wl), np.median(noisy_data_bi[3], axis=0), label='photometric 1')
 plt.plot(cp.ndarray.get(wl), np.median(noisy_data_bi[4], axis=0), label = 'photometric 2')
