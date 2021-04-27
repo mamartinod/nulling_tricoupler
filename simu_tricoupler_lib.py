@@ -138,14 +138,11 @@ def uniform_disk(ysz, xsz, radius, rebin, between_pix=False, norm=False):
 
     return(res)
 
-def createSubPupil(sz, sub_rad, baseline, rebin, between_pix=False, norm=False):
-    global center1, center2, sub_pupil
+def createSubPupil(sz, sub_rad, centres, rebin, between_pix=False, norm=False):
     pupil = np.zeros((sz, sz))
     sub_pupil = uniform_disk(sub_rad*2, sub_rad*2, sub_rad, rebin, between_pix, norm)
-    center1 = int(sz // 2 - baseline // 2)
-    center2 = int(sz // 2 + baseline // 2)
-    pupil[sz//2-sub_rad:sz//2+sub_rad, center1-sub_rad:center1+sub_rad] = sub_pupil
-    pupil[sz//2-sub_rad:sz//2+sub_rad, center2-sub_rad:center2+sub_rad] = sub_pupil
+    for centre in centres:
+        pupil[centre[0]-sub_rad:centre[0]+sub_rad, centre[1]-sub_rad:centre[1]+sub_rad] = sub_pupil
     return pupil
 
 def calculateInjection(phs_screen, wl, geo_inj=0.8):
@@ -286,6 +283,14 @@ def selectCoupler(name):
         return 1/2**0.5 * np.array([[1.0                  , np.exp(-1j* np.pi/2)],
                                     [np.exp(-1j* np.pi/2)  , 1.],
                                     [0.                   , 0.]], dtype=np.complex64)
+
+def calculate_pistons(phs_pup, sub_pupil_centres, sub_rad):
+    '''Calculates the piston of each sub pupil'''
+    pistons = np.zeros(len(sub_pupil_centres))
+    for i, centre in enumerate(sub_pupil_centres):
+        sub_pupil = phs_pup[centre[0]-sub_rad:centre[0]+sub_rad, centre[1]-sub_rad:centre[1]+sub_rad]
+        pistons[i] = np.mean(sub_pupil[sub_pupil != 0])
+    return pistons
 
 
 if __name__ == '__main__':
