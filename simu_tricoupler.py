@@ -64,7 +64,7 @@ from datetime import datetime
 # Settings
 # =============================================================================
 # To save data
-save = True
+save = False
 # To plot data
 plot = False
 # To simulate photon noise
@@ -97,15 +97,21 @@ achromatic_phasemask_cocoupler = np.array([np.pi/2, 0.])
 # =============================================================================
 tdiam = 8.2 # Diameter of the telescope (in meter)
 subpup_diam = 1. # Diameter of the sub-pupils (in meter)
-baseline = 5.55 # Distance between two sub-pupils (in meter)
+# baseline = 5.55 # Distance between two sub-pupils (in meter) ORIGINAL
+baseline = 6.45 # Distance between two sub-pupils (in meter)
 fc_scex = 19.5 # 19.5 l/D is the cutoff frequency of the DM for 1200 modes corrected (source: Vincent)
 wavel_r0 = 0.5e-6 # wavelength where r0 is measured (in meters)
 wavel = 1.6e-6 # Wavelength of observation (in meter)
 bandwidth = 0.2e-6 # Bandwidth around the wavelength of observation (in meter)
 dwl = 5e-9 # Width of one spectral channel (in meter)
 
-meter2pixel = sz / tdiam # scale factor converting the meter-size in pixel, in pix/m
+metre_to_pixel = sz / tdiam # scale factor converting the meter-size in pixel, in pix/m
 ao_correc = 8. # How well the AO flattens the wavefront
+sub_pupil_centres = np.array([[-1.86333333, -3.2147619 ], # Centres of the subpupils in metres, provided by Barnaby
+                               [-1.86333333,  3.2352381 ],
+                               [ 1.86333333,  3.2352381 ],
+                               [ 3.11238095,  1.0852381 ]])
+sub_pupil_centres = (sub_pupil_centres * metre_to_pixel).astype(int) + sz//2
 
 # =============================================================================
 # Atmo parameters
@@ -122,8 +128,8 @@ angle = 45 # Direction of the wind
 fps = 2000 # frame rate (in Hz)
 delay = 0.001 # delay of the servo loop (in second)
 dit = 1 / fps # Detector Integration Time, time during which the detector collects photon (in second)
-timestep = 1e-4 # time step of the simulation (in second)
-time_obs = 0.1 # duration of observation (in second)
+timestep = 1e-2 # time step of the simulation (in second)
+time_obs = 10 # duration of observation (in second)
 
 # Let's define the axe of time on which any event will happened (turbulence, frame reading, servo loop)
 timeline = np.around(np.arange(0, time_obs+delay, timestep, dtype=np.float32), int(-np.log10(timestep)))
@@ -272,8 +278,8 @@ start = timer()
 wl = np.arange(wavel-bandwidth/2, wavel+bandwidth/2, dwl, dtype=np.float32)
 
 # Create the sub-pupil
-pupil = lib.createSubPupil(sz, int(subpup_diamp//2), baselinep, 5, norm=False)
-pupil = np.array(pupil , dtype=np.float32)
+pupil = lib.createSubPupil(sz, int(subpup_diamp//2), sub_pupil_centres, 5, norm=False)
+pupil = np.array(pupil, dtype=np.float32)
 
 # Create the phase screen.
 if activate_turbulence:
@@ -314,7 +320,7 @@ i_out_bi = np.zeros((5, wl.size), dtype=np.float32)
 # Loop over simulated time
 # =============================================================================
 for t in timeline:
-    phs_screen_moved, xyshift = lib.movePhaseScreen(phs_screen, wind_speed, angle, t-TIME_OFFSET, meter2pixel)
+    phs_screen_moved, xyshift = lib.movePhaseScreen(phs_screen, wind_speed, angle, t-TIME_OFFSET, metre_to_pixel)
     if xyshift[0] > phs_screen.shape[0] or xyshift[1] > phs_screen.shape[1]:
         if seed != None:
             seed += 20
@@ -328,12 +334,16 @@ for t in timeline:
                                        phs_screen_moved.shape[1]//2-sz//2:phs_screen_moved.shape[1]//2+sz//2]
 
     # Measure the piston of the subpupils
-    piston_pupA = np.mean(phs_pup[:,:sz//2][pupil[:,:sz//2]!=0], keepdims=True)
-    piston_pupB = np.mean(phs_pup[:,sz//2:][pupil[:,sz//2:]!=0], keepdims=True)
+    pistons = lib.calculate_pistons(phs_pup, sub_pupil_centres, int(subpup_diamp//2))
+    print(pistons)
+    input('')
 
     # Measure the differential atmospheric piston
-    diff_piston_atm = piston_pupA - piston_pupB
-    diff_pistons_atm.append(diff_piston_atm)
+    diff_piston_atm = []
+    for i in range(len(pistons)):
+        for j in range(i+1, len(pistons)):
+            diff_piston_atm.append(pistons[i] - pistons[j])
+    diff_pistons_atm.append(np.array(diff_piston_atm))
 
     # Total differential piston, including the instrumental air-delay between the beams
     diff_piston = np.array([DIFF_PISTON_REF + diff_piston_atm[0]], dtype=np.float32) # pupil A - pupil B
@@ -470,6 +480,8 @@ noisy_data = np.transpose(noisy_data, (1,0,2))
 noisy_data_noft = np.transpose(noisy_data_noft, (1,0,2))
 noisy_data_bi = np.transpose(noisy_data_bi, (1,0,2))
 
+print(data_bi.shape)
+input('')
 stop = timer()
 print('Total duration', stop - start)
 
