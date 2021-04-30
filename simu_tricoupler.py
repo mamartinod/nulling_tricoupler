@@ -128,26 +128,25 @@ class Coupler(object):
         # =============================================================================
         # Acquisition and detector parameters
         # =============================================================================
-        fps = 2000 # frame rate (in Hz)
-        delay = 0.001 # delay of the servo loop (in second)
-        dit = 1 / fps # Detector Integration Time, time during which the detector collects photon (in second)
-        timestep = 1e-2 # time step of the simulation (in second)
-        time_obs = 10 # duration of observation (in second)
+        self.fps = 2000 # frame rate (in Hz)
+        self.delay = 0.001 # delay of the servo loop (in second)
+        self.dit = 1 / self.fps # Detector Integration Time, time during which the detector collects photon (in second)
+        self.timestep = 1e-2 # time step of the simulation (in second)
 
         # Let's define the axe of time on which any event will happened (turbulence, frame reading, servo loop)
-        self.timeline = np.around(np.arange(0, time_obs+delay, timestep, dtype=np.float32), int(-np.log10(timestep)))
-        self.time_counter = 0
+        # self.timeline = np.around(np.arange(0, time_obs+self.delay, timestep, dtype=np.float32), int(-np.log10(timestep)))
+        self.time = -self.timestep
 
         # Detector is CRED-1
-        read_noise = 0.7 # Read noise of the detector (in e-)
-        QE = 0.6 # Quantum efficiency (probability of detection of a photon by the detector)
-        ndark = 50 # Dark current (false event occured because of the temperature) (in e-/pix/second)
-        enf = 1. #1.25 # Excess noise factor due to the amplification process
+        self.read_noise = 0.7 # Read noise of the detector (in e-)
+        self.QE = 0.6 # Quantum efficiency (probability of detection of a photon by the detector)
+        self.ndark = 50 # Dark current (false event occured because of the temperature) (in e-/pix/second)
+        self.enf = 1. #1.25 # Excess noise factor due to the amplification process
 
         # # Detector is CRED-2
-        # read_noise = 30 # Read noise of the detector (in e-)
-        # QE = 0.8 # Quantum efficiency (probability of detection of a photon by the detector)
-        # ndark = 1500 # Dark current (false event occured because of the temperature) (in e-/pix/second)
+        # self.read_noise = 30 # Read noise of the detector (in e-)
+        # self.QE = 0.8 # Quantum efficiency (probability of detection of a photon by the detector)
+        # self.ndark = 1500 # Dark current (false event occured because of the temperature) (in e-/pix/second)
 
         # =============================================================================
         # Beam combiner
@@ -187,7 +186,7 @@ class Coupler(object):
         tri_splitter = tri_splitter**0.5
 
         # Total combiner
-        combiner_tri = tricoupler@tri_splitter
+        self.combiner_tri = tricoupler@tri_splitter
 
 
         '''
@@ -218,7 +217,7 @@ class Coupler(object):
         bi_splitter = bi_splitter**0.5
 
         # Total combiner
-        combiner_bi = bicoupler@bi_splitter
+        self.combiner_bi = bicoupler@bi_splitter
 
 
         # =============================================================================
@@ -231,19 +230,19 @@ class Coupler(object):
         # =============================================================================
         # Servo loop parameters
         # =============================================================================
-        servo_gain = 0.
-        servo_int = 0.# 1.#0.05 # 0: no fringe tracking, 1.: fringe trcking at high flux, 0.05: fringe tracking at low flux (SNR<=2)
-        err_int = np.array([0.], dtype=np.float32)
-        diff_piston_command = np.array([0.], dtype=np.float32)
+        self.servo_gain = 0.
+        self.servo_int = 0.# 1.#0.05 # 0: no fringe tracking, 1.: fringe trcking at high flux, 0.05: fringe tracking at low flux (SNR<=2)
+        self.err_int = np.array([0.], dtype=np.float32)
+        self.diff_piston_command = np.array([0.], dtype=np.float32)
 
         if not self.activate_achromatic_phase_shift:
-            DIFF_PISTON_REF = wavel / 2
-            DIFF_PISTON_REFBI = wavel / 4
+            self.DIFF_PISTON_REF = wavel / 2
+            self.DIFF_PISTON_REFBI = wavel / 4
             self.achromatic_phasemask_tricoupler[:] = 0.
             self.achromatic_phasemask_cocoupler[:] = 0.
         else:
-            DIFF_PISTON_REF = 0.
-            DIFF_PISTON_REFBI = 0.
+            self.DIFF_PISTON_REF = 0.
+            self.DIFF_PISTON_REFBI = 0.
 
         # =============================================================================
         # Flux parameters
@@ -257,8 +256,8 @@ class Coupler(object):
         SCEXAO_THROUGHPUT = 0.2
         pupil_area = np.pi / 4 * subpup_diam**2
 
-        star_photons = MAG0FLUX * 10**(-0.4*magnitude) * SCEXAO_THROUGHPUT * pupil_area * bandwidth*1e6 * dit
-        print('Star photo-electrons', star_photons*0.75*QE, (star_photons*0.75*QE)**0.5)
+        star_photons = MAG0FLUX * 10**(-0.4*magnitude) * SCEXAO_THROUGHPUT * pupil_area * bandwidth*1e6 * self.dit
+        print('Star photo-electrons', star_photons*0.75*self.QE, (star_photons*0.75*self.QE)**0.5)
 
         # =============================================================================
         # Misc
@@ -269,8 +268,8 @@ class Coupler(object):
         is offseted.
         """
         self.TIME_OFFSET = 0. # time offset of the shift of the mask after creation of a new one
-        count_delay = 1
-        count_dit = 1
+        self.count_delay = 1
+        self.count_dit = 1
         debug = []
         # =============================================================================
         # Run
@@ -289,48 +288,28 @@ class Coupler(object):
         else:
             self.phs_screen = np.zeros((self.sz*self.oversz, self.sz*self.oversz), dtype=np.float32)
 
+
+        self.diff_piston_atm_original = []
+        self.diff_piston_command_original = []
+
     def step(self):
-        # =============================================================================
-        # Initiate storage lists
-        # =============================================================================
-        data = []
-        noisy_data = []
-        data_noft = []
-        noisy_data_noft = []
-        data_bi = []
-        noisy_data_bi = []
-
         diff_pistons_atm = []
-        diff_pistons_ft = []
-        diff_pistons_fr = []
-        diff_pistons_bi = []
-        diff_pistons_measured = []
-        diff_pistons_measured_noft = []
-        injections = []
-        injections_ft = []
-        injections_fr = []
         shifts = []
-        time_fr = []
-        time_ft = []
-
-
-        i_out = np.zeros((5, self.wl.size), dtype=np.float32)
-        i_out_noft = np.zeros((5, self.wl.size), dtype=np.float32)
-        i_out_bi = np.zeros((5, self.wl.size), dtype=np.float32)
+        null_outputs = []
+        photometric_outputs = []
 
         # =============================================================================
         # Loop over simulated time
         # =============================================================================
-        t = self.timeline[self.time_counter]
-        self.time_counter += 1
+        self.time += self.timestep
 
-        phs_screen_moved, xyshift = lib.movePhaseScreen(self.phs_screen, self.wind_speed, self.angle, t-self.TIME_OFFSET, self.metre_to_pixel)
+        phs_screen_moved, xyshift = lib.movePhaseScreen(self.phs_screen, self.wind_speed, self.angle, self.time-self.TIME_OFFSET, self.metre_to_pixel)
         if xyshift[0] > self.phs_screen.shape[0] or xyshift[1] > self.phs_screen.shape[1]:
             if self.seed != None:
                 self.seed += 20
             self.phs_screen = lib.generatePhaseScreen(self.wavel_r0, self.sz*self.oversz, self.ll, self.r0, self.L0, fc=self.fc_scex, correc=9, pdiam=self.tdiam, seed=None)
             self.phs_screen = np.array(self.phs_screen, dtype=np.float32)
-            self.TIME_OFFSET = t
+            self.TIME_OFFSET = self.time
 
         shifts.append(xyshift)
         # We stay in phase space hence the simple multiplication below to crop the wavefront.
@@ -345,20 +324,47 @@ class Coupler(object):
         baseline = 0
         for i, piston_pupA in enumerate(pistons):
             for j in range(i+1, len(pistons)):
+                # =============================================================================
+                # Initiate storage lists
+                # =============================================================================
+                data = []
+                noisy_data = []
+                data_noft = []
+                noisy_data_noft = []
+                data_bi = []
+                noisy_data_bi = []
+
+                diff_pistons_ft = []
+                diff_pistons_fr = []
+                diff_pistons_bi = []
+                diff_pistons_measured = []
+                diff_pistons_measured_noft = []
+                injections = []
+                injections_ft = []
+                injections_fr = []
+                time_fr = []
+                time_ft = []
+
+
+                i_out = np.zeros((5, self.wl.size), dtype=np.float32)
+                i_out_noft = np.zeros((5, self.wl.size), dtype=np.float32)
+                i_out_bi = np.zeros((5, self.wl.size), dtype=np.float32)
+
+
                 piston_pupB = pistons[j]
 
                 diff_piston_atm = piston_pupA - piston_pupB
                 diff_pistons_atm.append(diff_piston_atm)
 
                 # Total differential piston, including the instrumental air-delay between the beams
-                if diff_piston_atm_original is None:
-                    self.diff_piston_atm_original = diff_piston_atm
-                    self.diff_piston_command_original = diff_piston_command
-                diff_piston = np.array([DIFF_PISTON_REF + self.diff_piston_atm_original[baseline]], dtype=np.float32) # pupil A - pupil B
-                diff_piston_corrected = diff_piston - self.diff_piston_command_original[baseline]
+                if self.time == 0:
+                    self.diff_piston_atm_original = diff_pistons_atm
+                    self.diff_piston_command_original = self.diff_piston_command
+                diff_piston = np.array([self.DIFF_PISTON_REF + self.diff_piston_atm_original[baseline]], dtype=np.float32) # pupil A - pupil B
+                diff_piston_corrected = diff_piston - self.diff_piston_command_original
 
-                injection = np.array([lib.calculateInjection(phs_pup[:,:self.sz//2][self.pupil[:,:self.sz//2]!=0], self.wl), \
-                                      lib.calculateInjection(phs_pup[:,self.sz//2:][self.pupil[:,self.sz//2:]!=0], self.wl)])
+                injection = np.array([lib.calculateInjection(phs_pup, self.wl, self.sub_pupil_centres[i], int(self.subpup_diamp//2)), \
+                                      lib.calculateInjection(phs_pup, self.wl, self.sub_pupil_centres[j], int(self.subpup_diamp//2))])
 
                 # Input wavefronts
                 a_in = np.array([np.exp(1j*2*np.pi/self.wl*(piston_pupA + diff_piston_corrected) + 1j*self.achromatic_phasemask_tricoupler[0]),\
@@ -366,7 +372,7 @@ class Coupler(object):
                                 dtype=np.complex64)
                 if self.activate_flux:
                     a_in *= injection**0.5 * star_photons**0.5
-                a_out = combiner_tri@a_in # Deduce the outcoming wavefront after the integrated-optics device
+                a_out = self.combiner_tri@a_in # Deduce the outcoming wavefront after the integrated-optics device
                 i_out += np.abs(a_out)**2
 
                 # Same but with no fringe tracking
@@ -375,46 +381,46 @@ class Coupler(object):
                                      dtype=np.complex64)
                 if self.activate_flux:
                     a_in_noft *= injection**0.5 * star_photons**0.5
-                a_out_noft = combiner_tri@a_in_noft
+                a_out_noft = self.combiner_tri@a_in_noft
                 i_out_noft += np.abs(a_out_noft)**2
 
                 # Same but with codirectional coupler
-                diff_piston_bi = np.array([DIFF_PISTON_REFBI + self.diff_piston_atm_original[baseline]], dtype=np.float32) # pupil 1 - pupil 2
+                diff_piston_bi = np.array([self.DIFF_PISTON_REFBI + self.diff_piston_atm_original[baseline]], dtype=np.float32) # pupil 1 - pupil 2
                 diff_pistons_bi.append(diff_piston_bi)
                 a_in_bi = np.array([np.exp(1j*2*np.pi/self.wl*(piston_pupA + diff_piston_bi) + 1j*self.achromatic_phasemask_cocoupler[0]),\
                                     np.exp(1j*2*np.pi/self.wl*(piston_pupB)                  + 1j*self.achromatic_phasemask_cocoupler[1])],\
                                    dtype=np.complex64)
                 if self.activate_flux:
                     a_in_bi *= injection**0.5 * star_photons**0.5
-                a_out_bi = combiner_bi@a_in_bi
+                a_out_bi = self.combiner_bi@a_in_bi
                 i_out_bi += np.abs(a_out_bi)**2
 
-                if count_dit < dit/timestep:
-                    count_dit += 1
+                if self.count_dit < self.dit/self.timestep:
+                    self.count_dit += 1
                 else:
-                    i_out /= count_dit
+                    i_out /= self.count_dit
                     data.append(i_out)
-                    noisy_i_out = lib.addNoise(i_out, QE, read_noise, ndark, fps, self.activate_photon_noise, self.activate_detector_noise, enf)
+                    noisy_i_out = lib.addNoise(i_out, self.QE, self.read_noise, self.ndark, self.fps, self.activate_photon_noise, self.activate_detector_noise, self.enf)
                     noisy_data.append(noisy_i_out)
 
                     # No fringe tracking
-                    i_out_noft /= count_dit
+                    i_out_noft /= self.count_dit
                     data_noft.append(i_out_noft)
-                    noisy_i_out_noft = lib.addNoise(i_out_noft, QE, read_noise, ndark, fps, self.activate_photon_noise, self.activate_detector_noise, enf)
+                    noisy_i_out_noft = lib.addNoise(i_out_noft, self.QE, self.read_noise, self.ndark, self.fps, self.activate_photon_noise, self.activate_detector_noise, self.enf)
                     noisy_data_noft.append(noisy_i_out_noft)
 
                     # Codirectional coupler
-                    i_out_bi /= count_dit
+                    i_out_bi /= self.count_dit
                     data_bi.append(i_out_bi)
-                    noisy_i_out_bi = lib.addNoise(i_out_bi, QE, read_noise, ndark, fps, self.activate_photon_noise, self.activate_detector_noise, enf)
+                    noisy_i_out_bi = lib.addNoise(i_out_bi, self.QE, self.read_noise, self.ndark, self.fps, self.activate_photon_noise, self.activate_detector_noise, self.enf)
                     noisy_data_bi.append(noisy_i_out_bi)
 
                     # Store some data
                     diff_pistons_fr.append(diff_piston_atm)
                     injections_fr.append(injection)
-                    time_fr.append(t)
+                    time_fr.append(self.time)
 
-                    if count_delay == count_dit: # Capture the first frame of the double cycles on DIT and Delay to send to fringe trakcer
+                    if self.count_delay == self.count_dit: # Capture the first frame of the double cycles on DIT and Delay to send to fringe trakcer
                         noisy_i_out_toft = np.array(noisy_i_out, dtype=np.float32)
                         noisy_i_out_noft_toft = np.array(noisy_i_out_noft, dtype=np.float32)
                         diff_piston_toft = np.array(diff_piston_atm)
@@ -424,35 +430,57 @@ class Coupler(object):
                     i_out = np.zeros_like(i_out)
                     i_out_noft = np.zeros_like(i_out_noft)
                     i_out_bi = np.zeros_like(i_out_bi)
-                    count_dit = 1
+                    self.count_dit = 1
 
 
                 # if couplertype == 'tricoupler':
-                if count_delay < delay/timestep:
-                    count_delay += 1
+                if self.count_delay < self.delay/self.timestep:
+                    self.count_delay += 1
                 else:
-                    # print('Delay', count_dit, count_delay, t)
+                    # print('Delay', self.count_dit, self.count_delay, t)
                     # With fringe tracking and application of the measured piston
                     diff_piston_meas = lib.measurePhase3(noisy_i_out_toft, self.wl)
                     diff_pistons_measured.append(diff_piston_meas)
-                    diff_piston_error = diff_piston_meas - DIFF_PISTON_REF
-                    err_int += diff_piston_error
-                    diff_piston_command = servo_int * err_int + servo_gain * diff_piston_error
+                    diff_piston_error = diff_piston_meas - self.DIFF_PISTON_REF
+                    self.err_int += diff_piston_error
+                    diff_piston_command = self.servo_int * self.err_int + self.servo_gain * diff_piston_error
 
                     diff_piston_meas_noft = lib.measurePhase3(noisy_i_out_noft_toft, self.wl)
                     diff_pistons_measured_noft.append(diff_piston_meas_noft)
 
                     diff_pistons_ft.append(diff_piston_toft)
                     injections_ft.append(injection_toft)
-                    time_ft.append(t)
-                    count_delay = 1
+                    time_ft.append(self.time)
+                    self.count_delay = 1
 
+
+                data_bi = self.format_data(data_bi)
+                null_outputs.append(data_bi[0:2])
                 baseline += 1
 
-    def format_data(self):
+            if i == 3:
+                photometric_outputs.append(data_bi[3:5])
+            else:
+                # print('*****')
+                # print(data_bi[0:2].shape, data_bi[3].shape)
+                # input('')
+                photometric_outputs.append(data_bi[3])
+        print(type(null_outputs[0]), type(photometric_outputs[0]))
+        null_outputs = np.array(null_outputs)
+        photometric_outputs = np.array(photometric_outputs)
+        print(null_outputs.shape, photometric_outputs.shape, np.array(photometric_outputs[0]).shape)
+        input('')
+        return null_outputs, photometric_outputs
+
+    def format_data(self, data):
         # =============================================================================
         # Format data
         # =============================================================================
+        data = np.array(data)
+        data = np.transpose(data, (1,0,2))
+        return data
+
+    def format_other(self):
         diff_pistons_atm = np.array(diff_pistons_atm)
         diff_pistons_bi = np.array(diff_pistons_bi)
         diff_pistons_ft = np.array(diff_pistons_ft)
@@ -474,22 +502,6 @@ class Coupler(object):
         diff_pistons_measured = np.squeeze(diff_pistons_measured)
         diff_pistons_measured_noft = np.squeeze(diff_pistons_measured_noft)
 
-        data = np.array(data)
-        noisy_data = np.array(noisy_data)
-        data_bi = np.array(data_bi)
-        data_noft = np.array(data_noft)
-        noisy_data_noft = np.array(noisy_data_noft)
-        noisy_data_bi = np.array(noisy_data_bi)
-
-        data = np.transpose(data, (1,0,2))
-        data_noft = np.transpose(data_noft, (1,0,2))
-        data_bi = np.transpose(data_bi, (1,0,2))
-        noisy_data = np.transpose(noisy_data, (1,0,2))
-        noisy_data_noft = np.transpose(noisy_data_noft, (1,0,2))
-        noisy_data_bi = np.transpose(noisy_data_bi, (1,0,2))
-
-        print(data_bi.shape)
-        input('')
 
     def calculate_quantities(self):
         # =============================================================================
@@ -520,8 +532,8 @@ class Coupler(object):
                      noisy_data_bi=noisy_data_bi, diff_pistons_atm=diff_pistons_atm, diff_pistons_fr=diff_pistons_fr,
                      diff_pistons_measured=diff_pistons_measured, diff_pistons_measured_noft=diff_pistons_measured_noft,
                      diff_pistons_ft=diff_pistons_ft, null_depth=null_depth, null_depth_noft=null_depth_noft,
-                     null_depth_bi=null_depth_bi, det_charac=np.array([QE, read_noise, ndark, fps]),
-                     servo=np.array([delay, servo_gain, servo_int]), atm=np.array([self.r0, self.wind_speed, self.angle]))
+                     null_depth_bi=null_depth_bi, det_charac=np.array([self.QE, self.read_noise, self.ndark, self.fps]),
+                     servo=np.array([self.delay, self.servo_gain, self.servo_int]), atm=np.array([self.r0, self.wind_speed, self.angle]))
 
     def plot_data(self):
         # =============================================================================
@@ -544,8 +556,8 @@ class Coupler(object):
             plt.plot(time_ft, diff_pistons_measured/wavel, '.', label='Corrected differential piston')
             plt.plot(time_ft, (diff_pistons_measured_noft)/wavel, 'x', label='Measured atmospheric differential piston')
             plt.plot(timeline, diff_pistons_bi/wavel, '.', label='Differential piston in Co-coupler')
-            plt.plot(timeline, DIFF_PISTON_REF/wavel*np.ones(timeline.size), '-', c='k', label='Differential piston reference')
-            plt.plot(timeline, DIFF_PISTON_REFBI/wavel*np.ones(timeline.size), '--', c='k', label='Differential piston reference (co-coupler)')
+            plt.plot(timeline, self.DIFF_PISTON_REF/wavel*np.ones(timeline.size), '-', c='k', label='Differential piston reference')
+            plt.plot(timeline, self.DIFF_PISTON_REFBI/wavel*np.ones(timeline.size), '--', c='k', label='Differential piston reference (co-coupler)')
             plt.grid()
             plt.legend(loc='best')
             plt.xlabel('Delay (count)')
@@ -556,8 +568,8 @@ class Coupler(object):
             plt.plot(diff_pistons_ft/wavel, diff_pistons_measured/wavel, '.', label='Corrected differential piston')
             plt.plot(diff_pistons_ft/wavel, diff_pistons_measured_noft/wavel, '.', label='Measured atmospheric differential piston')
             plt.plot(diff_pistons_atm/wavel, diff_pistons_bi/wavel, '.', label='Differential piston in Co-coupler')
-            plt.plot(diff_pistons_ft/wavel, DIFF_PISTON_REF/wavel*np.ones_like(diff_pistons_ft), '-', c='k', label='Differential piston reference')
-            plt.plot(diff_pistons_ft/wavel, DIFF_PISTON_REFBI/wavel*np.ones(diff_pistons_ft.size), '--', c='k', label='Differential piston reference (co-coupler)')
+            plt.plot(diff_pistons_ft/wavel, self.DIFF_PISTON_REF/wavel*np.ones_like(diff_pistons_ft), '-', c='k', label='Differential piston reference')
+            plt.plot(diff_pistons_ft/wavel, self.DIFF_PISTON_REFBI/wavel*np.ones(diff_pistons_ft.size), '--', c='k', label='Differential piston reference (co-coupler)')
             plt.grid()
             plt.legend(loc='best')
             plt.xlabel('Atm piston (wl0)')
