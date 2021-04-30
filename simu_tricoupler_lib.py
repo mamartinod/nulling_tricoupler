@@ -145,7 +145,8 @@ def createSubPupil(sz, sub_rad, centres, rebin, between_pix=False, norm=False):
         pupil[centre[0]-sub_rad:centre[0]+sub_rad, centre[1]-sub_rad:centre[1]+sub_rad] = sub_pupil
     return pupil
 
-def calculateInjection(phs_screen, wl, geo_inj=0.8):
+def calculateInjection(phs_pup, wl, centre, sub_rad, geo_inj=0.8):
+    phs_screen = phs_pup[centre[0]-sub_rad:centre[0]+sub_rad, centre[1]-sub_rad:centre[1]+sub_rad]
     rms = np.std(phs_screen)
     strehl = np.exp(-(2*np.pi/wl)**2 * rms**2)
     injections = geo_inj * strehl
