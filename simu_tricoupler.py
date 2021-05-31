@@ -95,7 +95,7 @@ oversz = 4
 # Set the values of the phase masks for both tricoupler and directional coupler for each beam
 # achromatic_phasemask_tricoupler = np.array([np.pi, 0.])
 # achromatic_phasemask_cocoupler = np.array([np.pi/2, 0.])
-achromatic_phasemask_tricoupler = np.array([np.pi/2, 0.])
+achromatic_phasemask_tricoupler = np.array([np.pi, 0.])
 achromatic_phasemask_cocoupler = np.array([np.pi/2, 0.])
 
 # =============================================================================
@@ -175,13 +175,25 @@ Structure:
     5th row = photometric output B
 '''
 
-chromaticity = True
+chromaticity = False
 chromaticity_tri = True
 
-if chromaticity_tri: 
+# Loading in RSoft data for chromatic tricoupler
+if chromaticity_tri:
+    l_out = np.transpose(np.loadtxt("rsoft_coefficients/3DTriRatioCplLen1700Wvl14-17_Left_bp_mon_1_last.dat"))
+    c_out = np.transpose(np.loadtxt("rsoft_coefficients/3DTriRatioCplLen1700Wvl14-17_Left_bp_mon_2_last.dat"))
+    r_out = np.transpose(np.loadtxt("rsoft_coefficients/3DTriRatioCplLen1700Wvl14-17_Left_bp_mon_3_last.dat"))
     
-    c_coeff = np.linspace(0, 2/3,56) # 56 spectral channels for now
-    t_coeff = np.sqrt(1-2*(c_coeff**2))
+    wl = cp.array(l_out[0])
+    t_coeff = l_out[1]**0.5
+    c_coeff_c = c_out[1]**0.5
+    c_coeff_r = r_out[1]**0.5
+    
+    c_coeff = np.mean(np.array([c_coeff_c, c_coeff_r]), axis=0) # taking an average FOR NOW; figure out what to do more specifically later
+    
+    
+    # c_coeff = np.linspace(0, 2/3,56) # 56 spectral channels for now
+    # t_coeff = np.sqrt(1-2*(c_coeff**2))
     phi = np.arccos(-c_coeff / (2*t_coeff))
     ones = np.ones(phi.shape)
     z = np.zeros(phi.shape)
@@ -202,7 +214,7 @@ else:
 
 if chromaticity_tri:
     
-    coeff_tri = 0.25 * ones
+    coeff_tri = 0.25 * ones # mock splitting coefficients; all set to the same value for now
     
     tri_splitter = cp.array([[1-coeff_tri, z],
                              [z         , 1-coeff_tri],
@@ -246,61 +258,62 @@ Structure:
 
 
 one_baseline_data = False # GLINT data that used only one baseline (two apertures)
-if one_baseline_data:
-    in_file = h5py.File("one_baseline_data.hdf5", 'r')
-
-    wl = cp.array(in_file['wl']) * 1e-9
-    alpha_b1 = np.array(in_file['alpha_b1'])
-    alpha_b2 = np.array(in_file['alpha_b2'])
-    kappa_12 = np.array(in_file['kappa_12'])
-    kappa_21 = np.array(in_file['kappa_21'])
+if chromaticity:
+    if one_baseline_data:
+        in_file = h5py.File("one_baseline_data.hdf5", 'r')
     
-else:
-    # Contains current data from GLINT (4 beams, 6 baselines) hence need to calculate 4 splitting coeffs per beam 
-    zeta_file = h5py.File("20210322_zeta_coeff_raw.hdf5", 'r')
-
-    # null/antinull outputs for beams 1 and 2 (zeta coefficients)
-    zeta_b1_n1 = np.array(zeta_file['b1null1']) # Conversion in numpy array is mandatory to do calculations with the values
-    zeta_b1_an1 = np.array(zeta_file['b1null7'])
-    zeta_b1_n3 = np.array(zeta_file['b1null3'])
-    zeta_b1_an3 = np.array(zeta_file['b1null9'])
-    zeta_b1_n5 = np.array(zeta_file['b1null5'])
-    zeta_b1_an5 = np.array(zeta_file['b1null11'])
-
-    zeta_b2_n1 = np.array(zeta_file['b2null1']) # Conversion in numpy array is mandatory to do calculations with the values
-    zeta_b2_an1 = np.array(zeta_file['b2null7'])
-    zeta_b2_n2 = np.array(zeta_file['b2null2'])
-    zeta_b2_an2 = np.array(zeta_file['b2null8'])
-    zeta_b2_n6 = np.array(zeta_file['b2null6'])
-    zeta_b2_an6 = np.array(zeta_file['b2null12'])
-
-    # splitting ratio for beam 1 (into coupler 1)
-    alpha_b1 = (zeta_b1_n1 + zeta_b1_an1) / (1 + (zeta_b1_n1 + zeta_b1_an1) + (zeta_b1_n3 + zeta_b1_an3) + (zeta_b1_n5 + zeta_b1_an5))
-    # other splitting ratios for beam 1
-    # beta_b1 = 1 / (1 + (zeta_b1_n1 + zeta_b1_an1) + (zeta_b1_n3 + zeta_b1_an3) + (zeta_b1_n5 + zeta_b1_an5))
-    # gamma_b1 = (zeta_b1_n3 + zeta_b1_an3) / (1 + (zeta_b1_n1 + zeta_b1_an1) + (zeta_b1_n3 + zeta_b1_an3) + (zeta_b1_n5 + zeta_b1_an5))
-    # delta_b1 = (zeta_b1_n5 + zeta_b1_an5) / (1 + (zeta_b1_n1 + zeta_b1_an1) + (zeta_b1_n3 + zeta_b1_an3) + (zeta_b1_n5 + zeta_b1_an5))
-
-    # first splitting ratio for beam 2 (into coupler 1)
-    alpha_b2 = (zeta_b2_n1 + zeta_b2_an1) / (1 + (zeta_b2_n1 + zeta_b2_an1) + (zeta_b2_n2 + zeta_b2_an2) + (zeta_b2_n6 + zeta_b2_an6))
-
-    # Wavelength scale; note we cut off the highest and lowest wavelengths as zeta coeffs become messy there
-    wl = np.array(zeta_file['wl_scale']) # wavelength scale
-    within = ((wl < 1650) & (wl > 1350)) # central wavelength 1550 +/- 100 nm
-    wl = cp.array(wl[within] * 1e-9)
-
-
-    # Coupling and splitting coefficients
-    kappa_12 = (zeta_b1_an1 / zeta_b1_n1) / (1 + (zeta_b1_an1 / zeta_b1_n1))
-    kappa_21 = (zeta_b2_n1 / zeta_b2_an1) / (1 + (zeta_b2_n1 / zeta_b2_an1))
-
-    kappa_12 = kappa_12[within]
-    kappa_21 = kappa_21[within]
-    alpha_b1 = alpha_b1[within]
-    # beta_b1 = beta_b1[within]
-    # gamma_b1 = gamma_b1[within]
-    # delta_b1 = delta_b1[within]
-    alpha_b2 = alpha_b2[within]
+        wl = cp.array(in_file['wl']) * 1e-9
+        alpha_b1 = np.array(in_file['alpha_b1'])
+        alpha_b2 = np.array(in_file['alpha_b2'])
+        kappa_12 = np.array(in_file['kappa_12'])
+        kappa_21 = np.array(in_file['kappa_21'])
+        
+    else:
+        # Contains current data from GLINT (4 beams, 6 baselines) hence need to calculate 4 splitting coeffs per beam 
+        zeta_file = h5py.File("20210322_zeta_coeff_raw.hdf5", 'r')
+    
+        # null/antinull outputs for beams 1 and 2 (zeta coefficients)
+        zeta_b1_n1 = np.array(zeta_file['b1null1']) # Conversion in numpy array is mandatory to do calculations with the values
+        zeta_b1_an1 = np.array(zeta_file['b1null7'])
+        zeta_b1_n3 = np.array(zeta_file['b1null3'])
+        zeta_b1_an3 = np.array(zeta_file['b1null9'])
+        zeta_b1_n5 = np.array(zeta_file['b1null5'])
+        zeta_b1_an5 = np.array(zeta_file['b1null11'])
+    
+        zeta_b2_n1 = np.array(zeta_file['b2null1']) # Conversion in numpy array is mandatory to do calculations with the values
+        zeta_b2_an1 = np.array(zeta_file['b2null7'])
+        zeta_b2_n2 = np.array(zeta_file['b2null2'])
+        zeta_b2_an2 = np.array(zeta_file['b2null8'])
+        zeta_b2_n6 = np.array(zeta_file['b2null6'])
+        zeta_b2_an6 = np.array(zeta_file['b2null12'])
+    
+        # splitting ratio for beam 1 (into coupler 1)
+        alpha_b1 = (zeta_b1_n1 + zeta_b1_an1) / (1 + (zeta_b1_n1 + zeta_b1_an1) + (zeta_b1_n3 + zeta_b1_an3) + (zeta_b1_n5 + zeta_b1_an5))
+        # other splitting ratios for beam 1
+        # beta_b1 = 1 / (1 + (zeta_b1_n1 + zeta_b1_an1) + (zeta_b1_n3 + zeta_b1_an3) + (zeta_b1_n5 + zeta_b1_an5))
+        # gamma_b1 = (zeta_b1_n3 + zeta_b1_an3) / (1 + (zeta_b1_n1 + zeta_b1_an1) + (zeta_b1_n3 + zeta_b1_an3) + (zeta_b1_n5 + zeta_b1_an5))
+        # delta_b1 = (zeta_b1_n5 + zeta_b1_an5) / (1 + (zeta_b1_n1 + zeta_b1_an1) + (zeta_b1_n3 + zeta_b1_an3) + (zeta_b1_n5 + zeta_b1_an5))
+    
+        # first splitting ratio for beam 2 (into coupler 1)
+        alpha_b2 = (zeta_b2_n1 + zeta_b2_an1) / (1 + (zeta_b2_n1 + zeta_b2_an1) + (zeta_b2_n2 + zeta_b2_an2) + (zeta_b2_n6 + zeta_b2_an6))
+    
+        # Wavelength scale; note we cut off the highest and lowest wavelengths as zeta coeffs become messy there
+        wl = np.array(zeta_file['wl_scale']) # wavelength scale
+        within = ((wl < 1650) & (wl > 1350)) # central wavelength 1550 +/- 100 nm
+        wl = cp.array(wl[within] * 1e-9)
+    
+    
+        # Coupling and splitting coefficients
+        kappa_12 = (zeta_b1_an1 / zeta_b1_n1) / (1 + (zeta_b1_an1 / zeta_b1_n1))
+        kappa_21 = (zeta_b2_n1 / zeta_b2_an1) / (1 + (zeta_b2_n1 / zeta_b2_an1))
+    
+        kappa_12 = kappa_12[within]
+        kappa_21 = kappa_21[within]
+        alpha_b1 = alpha_b1[within]
+        # beta_b1 = beta_b1[within]
+        # gamma_b1 = gamma_b1[within]
+        # delta_b1 = delta_b1[within]
+        alpha_b2 = alpha_b2[within]
 
 
 if chromaticity:
@@ -407,7 +420,7 @@ debug = []
 start = timer()
 
 # Create the spectral dispersion
-if not chromaticity:
+if not chromaticity and not chromaticity_tri:
     wl = cp.arange(wavel-bandwidth/2, wavel+bandwidth/2, dwl, dtype=cp.float32)
     # if chromaticity == True, then wl is defined earlier when data file is opened 
 
@@ -796,7 +809,7 @@ phot_right = np.median(noisy_data[4], axis=0)
 plt.figure(9)
 plt.plot(cp.asnumpy(wl), left_out, linestyle='dashdot', label='left output')
 plt.plot(cp.asnumpy(wl), null_out, linestyle='dashdot', label='null output')
-plt.plot(cp.asnumpy(wl), right_out, linestyle='dashdot', label='right output')
+plt.plot(cp.asnumpy(wl), right_out, '+', label='right output')
 plt.plot(cp.asnumpy(wl), left_out + null_out + right_out, linestyle='dashdot', label='total') 
 plt.xlabel('Wavelength (microns)')
 plt.ylabel('Intensity')
