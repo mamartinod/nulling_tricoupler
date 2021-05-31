@@ -78,7 +78,7 @@ activate_detector_noise = False
 # To simulate the flux of a star, otherwise the incoming fluxes are equal to 1
 activate_flux = False
 # Use an achromatic phase mask instead of air-delaying (chromatic) one beam with respect to the other
-activate_achromatic_phase_shift = False
+activate_achromatic_phase_shift = True
 # To activate turbulence
 activate_turbulence = False
 # Use of photometric outputs
@@ -93,7 +93,9 @@ sz = 256
 oversz = 4
 
 # Set the values of the phase masks for both tricoupler and directional coupler for each beam
-achromatic_phasemask_tricoupler = np.array([np.pi, 0.])
+# achromatic_phasemask_tricoupler = np.array([np.pi, 0.])
+# achromatic_phasemask_cocoupler = np.array([np.pi/2, 0.])
+achromatic_phasemask_tricoupler = np.array([np.pi/2, 0.])
 achromatic_phasemask_cocoupler = np.array([np.pi/2, 0.])
 
 # =============================================================================
@@ -172,23 +174,58 @@ Structure:
     4th row = photometric output A
     5th row = photometric output B
 '''
-tricoupler = cp.asarray(np.array([[1/3**0.5                         , 1/3**0.5 * np.exp(1j* 2*np.pi/3)  , 0., 0.],
+
+chromaticity = True
+chromaticity_tri = True
+
+if chromaticity_tri: 
+    
+    c_coeff = np.linspace(0, 2/3,56) # 56 spectral channels for now
+    t_coeff = np.sqrt(1-2*(c_coeff**2))
+    phi = np.arccos(-c_coeff / (2*t_coeff))
+    ones = np.ones(phi.shape)
+    z = np.zeros(phi.shape)
+    
+    tricoupler = cp.asarray(np.array([[t_coeff * np.exp(1j*phi)                         , c_coeff  , z, z],
+                                      [c_coeff , c_coeff  , z, z],
+                                      [c_coeff , t_coeff * np.exp(1j*phi)                             , z, z],
+                                      [z                               , z                                , ones, z],
+                                      [z                               , z                                , z, ones]], dtype=np.complex64))
+
+else:
+    tricoupler = cp.asarray(np.array([[1/3**0.5                         , 1/3**0.5 * np.exp(1j* 2*np.pi/3)  , 0., 0.],
                                   [1/3**0.5 * np.exp(1j* 2*np.pi/3) , 1/3**0.5 * np.exp(1j* 2*np.pi/3)  , 0., 0.],
                                   [1/3**0.5 * np.exp(1j* 2*np.pi/3) , 1/3**0.5                          , 0., 0.],
                                   [0.                               , 0.                                , 1., 0.],
                                   [0.                               , 0.                                , 0., 1.]], dtype=np.complex64))
 
-# Splitter before combining the beams to get the photometric tap
-tri_splitter = cp.array([[1-coeff_tri, 0.],
-                         [0.         , 1-coeff_tri],
-                         [coeff_tri  , 0.],
-                         [0.         , coeff_tri]], dtype=cp.float32)
-# The coefficients below are given for intensities although we deal with amplitude of wavefront
-# so a square root must be applied to them
-tri_splitter = tri_splitter**0.5
 
-# Total combiner
-combiner_tri = tricoupler@tri_splitter
+if chromaticity_tri:
+    
+    coeff_tri = 0.25 * ones
+    
+    tri_splitter = cp.array([[1-coeff_tri, z],
+                             [z         , 1-coeff_tri],
+                             [coeff_tri  , z],
+                             [z         , coeff_tri]], dtype=cp.float32)
+    tri_splitter = tri_splitter**0.5
+    
+    # Total combiner
+    combiner_tri = cp.einsum('ijk,jlk->ilk', tricoupler, tri_splitter)
+
+    
+else:
+    # Splitter before combining the beams to get the photometric tap
+    tri_splitter = cp.array([[1-coeff_tri, 0.],
+                             [0.         , 1-coeff_tri],
+                             [coeff_tri  , 0.],
+                             [0.         , coeff_tri]], dtype=cp.float32)
+    # The coefficients below are given for intensities although we deal with amplitude of wavefront
+    # so a square root must be applied to them
+    tri_splitter = tri_splitter**0.5
+    
+    # Total combiner
+    combiner_tri = tricoupler@tri_splitter
 
 '''
 Transfer matrix of a directional coupler.
@@ -207,8 +244,8 @@ Structure:
 # Coupling and splitting coefficients for chromatic case 
 # =============================================================================
 
-chromaticity = True
-one_baseline_data = False
+
+one_baseline_data = False # GLINT data that used only one baseline (two apertures)
 if one_baseline_data:
     in_file = h5py.File("one_baseline_data.hdf5", 'r')
 
@@ -452,10 +489,17 @@ for t in tqdm(timeline):
     a_in = cp.array([cp.exp(1j*2*cp.pi/wl*(piston_pupA + diff_piston_corrected) + 1j*achromatic_phasemask_tricoupler[0]),\
                      cp.exp(1j*2*cp.pi/wl*piston_pupB                           + 1j*achromatic_phasemask_tricoupler[1])],\
                     dtype=cp.complex64)
+        
+    # a_in[0] = cp.zeros(len(a_in[0]))
+    # sys.exit()
 
     if activate_flux:
         a_in *= injection**0.5 * star_photons**0.5
-    a_out = combiner_tri@a_in # Deduce the outcoming wavefront after the integrated-optics device
+        
+    if chromaticity_tri:
+        a_out = cp.einsum('ijk,jk->ik', combiner_tri, a_in)
+    else:
+        a_out = combiner_tri@a_in # Deduce the outcoming wavefront after the integrated-optics device
     i_out += cp.abs(a_out)**2
 
     # Same but with no fringe tracking
@@ -464,7 +508,11 @@ for t in tqdm(timeline):
                          dtype=cp.complex64)
     if activate_flux:
         a_in_noft *= injection**0.5 * star_photons**0.5
-    a_out_noft = combiner_tri@a_in_noft
+        
+    if chromaticity_tri:
+        a_out_noft = cp.einsum('ijk,jk->ik', combiner_tri, a_in_noft)
+    else:
+        a_out_noft = combiner_tri@a_in_noft
     i_out_noft += cp.abs(a_out_noft)**2
 
     # Same but with codirectional coupler
@@ -718,20 +766,64 @@ print('Med and std null depth with BI', np.median(null_depth_bi.mean(1)), np.std
 
 
 # Plotting interferometric outputs wrt wavelength
-plt.figure(7)
-plt.plot(cp.ndarray.get(wl), np.median(noisy_data_bi[0], axis=0), '+', label='Null')
-plt.plot(cp.ndarray.get(wl), np.median(antinull_bi, axis=0), '*', label='Antinull')
-plt.plot(cp.ndarray.get(wl), np.median(antinull_bi, axis=0) + np.median(noisy_data_bi[0], axis=0), label='Total')
-plt.legend(loc='best')
-plt.xlabel('Wavelength, lambda')
-plt.ylabel('Intensity')
+# plt.figure(7)
+# plt.plot(cp.ndarray.get(wl), np.median(noisy_data_bi[0], axis=0), '+', label='Null')
+# plt.plot(cp.ndarray.get(wl), np.median(antinull_bi, axis=0), '*', label='Antinull')
+# plt.plot(cp.ndarray.get(wl), np.median(antinull_bi, axis=0) + np.median(noisy_data_bi[0], axis=0), label='Total')
+# plt.legend(loc='best')
+# plt.xlabel('Wavelength, lambda')
+# plt.ylabel('Intensity')
 
-# Plotting intensity (photometric, interferometric, total) wrt wavelength
-plt.figure(8)
-plt.plot(cp.ndarray.get(wl), np.median(noisy_data_bi[3], axis=0), label='photometric 1')
-plt.plot(cp.ndarray.get(wl), np.median(noisy_data_bi[4], axis=0), label = 'photometric 2')
-plt.plot(cp.ndarray.get(wl), np.median(antinull_bi, axis=0) + np.median(noisy_data_bi[0], axis=0), label='interferometric')
-plt.plot(cp.ndarray.get(wl), np.median(antinull_bi, axis=0) + np.median(noisy_data_bi[0], axis=0) + np.median(noisy_data_bi[3], axis=0) + np.median(noisy_data_bi[4], axis=0), label='total')
-plt.legend(loc='best')
-plt.xlabel('Wavelength, lambda')
+# # Plotting intensity (photometric, interfe documentatiorometric, total) wrt wavelength
+# plt.figure(8)
+# plt.plot(cp.ndarray.get(wl), np.median(noisy_data_bi[3], axis=0), label='photometric 1')
+# plt.plot(cp.ndarray.get(wl), np.median(noisy_data_bi[4], axis=0), label = 'photometric 2')
+# plt.plot(cp.ndarray.get(wl), np.median(antinull_bi, axis=0) + np.median(noisy_data_bi[0], axis=0), label='interferometric')
+# plt.plot(cp.ndarray.get(wl), np.median(antinull_bi, axis=0) + np.median(noisy_data_bi[0], axis=0) + np.median(noisy_data_bi[3], axis=0) + np.median(noisy_data_bi[4], axis=0), label='total')
+# plt.legend(loc='best')
+# plt.xlabel('Wavelength, lambda')
+# plt.ylabel('Intensity')
+
+
+# plotting the intensity outputs from the tricoupler
+
+left_out = np.median(noisy_data[0], axis=0) # output A
+null_out = np.median(noisy_data[1], axis=0) # output B
+right_out = np.median(noisy_data[2], axis=0) # output C
+phot_left = np.median(noisy_data[3], axis=0) # photometric output 
+phot_right = np.median(noisy_data[4], axis=0)
+
+plt.figure(9)
+plt.plot(cp.asnumpy(wl), left_out, linestyle='dashdot', label='left output')
+plt.plot(cp.asnumpy(wl), null_out, linestyle='dashdot', label='null output')
+plt.plot(cp.asnumpy(wl), right_out, linestyle='dashdot', label='right output')
+plt.plot(cp.asnumpy(wl), left_out + null_out + right_out, linestyle='dashdot', label='total') 
+plt.xlabel('Wavelength (microns)')
 plt.ylabel('Intensity')
+plt.legend(loc='best')
+plt.grid(which='major')
+
+# plt.figure(10)
+# plt.plot(cp.asnumpy(wl), left_out + null_out + right_out, linestyle='--', label='interferometric') 
+# plt.plot(cp.asnumpy(wl), phot_left, linestyle='--', label='photometric 1')
+# plt.plot(cp.asnumpy(wl), phot_right, linestyle='dashdot', label='photometric 2')
+# plt.plot(cp.asnumpy(wl), left_out + null_out + right_out + phot_left + phot_right, linestyle='--', label='total')
+# plt.xlabel('Wavelength (microns)')
+# plt.ylabel('Intensity')
+# plt.legend(loc='best')
+# plt.grid(which='major')
+
+
+# # aim: plot the output phase difference between left and right outputs as a fn of wavelength. require the intensities as fns of wavelength for the tricoupler? 
+
+# diff_angle = (3**0.5) * np.arctan((left_out - right_out) / (left_out + right_out - 2*null_out))
+# out_piston = (cp.asnumpy(wl)/2*np.pi) * diff_angle
+# plt.figure(10)
+# plt.plot(cp.asnumpy(wl), out_piston, '+', label='differential phase')
+# plt.ylabel("Phase difference between left and right outputs")
+# plt.xlabel("Wavelength (microns)")
+# plt.legend(loc='best')
+# plt.grid(which='major')
+
+
+
