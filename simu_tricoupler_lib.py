@@ -263,6 +263,7 @@ def measurePhase2(data, wl):
 
 def measurePhase3(data, wl):
     di = data[0] - data[2]
+    di = -di
     denom = (data[0]+data[2]-2*data[1])
     di2 = di / denom
     dphi = cp.arctan(-3**0.5*di2)

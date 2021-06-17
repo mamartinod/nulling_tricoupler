@@ -120,10 +120,10 @@ if chromaticity_tri:
     
     # Note: re-writing t and c coefficients for now!!!
     # c_coeff = np.linspace(0, 2/3,56) # 56 spectral channels for now
-    c_coeff = np.full(56, 1/3)
-    t_coeff = np.sqrt(1-2*(c_coeff**2))
     
-    wl = cp.linspace(1.5e-06, 1.7e-06, len(c_coeff))    
+    # c_coeff = np.full(56, 1/3**0.5)
+    # t_coeff = np.sqrt(1-2*(c_coeff**2))
+    # wl = cp.linspace(1.5e-06, 1.7e-06, len(c_coeff))    
     
     phi = np.arccos(-c_coeff / (2*t_coeff))
     ones = np.ones(phi.shape)
@@ -284,18 +284,18 @@ if chromaticity_tri:
                                       [z                        , z                        , z    , ones]], dtype=np.complex64))
 
 else:
-    tricoupler = cp.asarray(np.array([[1/3**0.5                         , 1/3**0.5 * np.exp(1j* 2*np.pi/3)  , 0., 0.],
-                                      [1/3**0.5 * np.exp(1j* 2*np.pi/3) , 1/3**0.5 * np.exp(1j* 2*np.pi/3)  , 0., 0.],
-                                      [1/3**0.5 * np.exp(1j* 2*np.pi/3) , 1/3**0.5                          , 0., 0.],
-                                      [0.                               , 0.                                , 1., 0.],
-                                      [0.                               , 0.                                , 0., 1.]], dtype=np.complex64))
-
-    # Changing the tricoupler convention so phase shifts are on diagonals
-    # tricoupler = cp.asarray(np.array([[1/3**0.5 * np.exp(1j* 2*np.pi/3) , 1/3**0.5                          , 0., 0.],
-    #                                   [1/3**0.5                         , 1/3**0.5                          , 0., 0.],
-    #                                   [1/3**0.5                         , 1/3**0.5 * np.exp(1j* 2*np.pi/3)  , 0., 0.],
+    # tricoupler = cp.asarray(np.array([[1/3**0.5                         , 1/3**0.5 * np.exp(1j* 2*np.pi/3)  , 0., 0.],
+    #                                   [1/3**0.5 * np.exp(1j* 2*np.pi/3) , 1/3**0.5 * np.exp(1j* 2*np.pi/3)  , 0., 0.],
+    #                                   [1/3**0.5 * np.exp(1j* 2*np.pi/3) , 1/3**0.5                          , 0., 0.],
     #                                   [0.                               , 0.                                , 1., 0.],
     #                                   [0.                               , 0.                                , 0., 1.]], dtype=np.complex64))
+
+    # New tricoupler convention - phase shifts on diagonals
+    tricoupler = cp.asarray(np.array([[1/3**0.5 * np.exp(1j* 2*np.pi/3) , 1/3**0.5                          , 0., 0.],
+                                      [1/3**0.5                         , 1/3**0.5                          , 0., 0.],
+                                      [1/3**0.5                         , 1/3**0.5 * np.exp(1j* 2*np.pi/3)  , 0., 0.],
+                                      [0.                               , 0.                                , 1., 0.],
+                                      [0.                               , 0.                                , 0., 1.]], dtype=np.complex64))
 
 
 # Tri splitter
@@ -502,9 +502,6 @@ for index, t in enumerate(tqdm(timeline)):
         phs_screen = lib.generatePhaseScreen(wavel_r0, sz*oversz, ll, r0, L0, fc=fc_scex, correc=9, pdiam=tdiam, seed=None)
         phs_screen = cp.array(phs_screen, dtype=cp.float32)
         TIME_OFFSET = t
-    
-    # plt.imshow(cp.asnumpy(phs_screen_moved)) # checking this works for now
-    # plt.show()
 
     shifts.append(xyshift)
     # We stay in phase space hence the simple multiplication below to crop the wavefront.
@@ -534,8 +531,7 @@ for index, t in enumerate(tqdm(timeline)):
                      cp.exp(1j*2*cp.pi/wl*piston_pupB                           + 1j*achromatic_phasemask_tricoupler[1])],\
                     dtype=cp.complex64)
         
-    # a_in[1] = cp.zeros(len(a_in[1])) # right input is 0; right input only
-    # sys.exit()
+    # a_in[1] = cp.zeros(len(a_in[1])) # right input is 0
 
     if activate_flux:
         a_in *= injection**0.5 * star_photons**0.5
@@ -545,11 +541,7 @@ for index, t in enumerate(tqdm(timeline)):
     else:
         a_out = combiner_tri@a_in # Deduce the outcoming wavefront after the integrated-optics device
     i_out += cp.abs(a_out)**2
-    # count += 1
-    # if count==50:
-    #     print(i_out)
-    #     sys.exit()
-    # print(diff_piston_command)
+
     
     # Same but with no fringe tracking
     a_in_noft = cp.array([cp.exp(1j*2*cp.pi/wl*(piston_pupA)    + 1j*achromatic_phasemask_tricoupler[0]),\
@@ -580,7 +572,6 @@ for index, t in enumerate(tqdm(timeline)):
     if chromaticity:
         a_out_bi = cp.einsum('ijk,jk->ik', combiner_bi, a_in_bi)
         # multiplies the second, bzw. first axes and keeps the wavelength axes
-
     else:
         a_out_bi = combiner_bi@a_in_bi
 
