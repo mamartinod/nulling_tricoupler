@@ -65,12 +65,13 @@ import sys
 from tqdm import tqdm
 import time
 import h5py
+import addcopyfighandler # allows to ctrl+C matplotlib images
 
 # =============================================================================
 # Settings
 # =============================================================================
 # To save data
-save = True
+save = False
 # To simulate photon noise
 activate_photon_noise = False
 # To simulate the detector noise
@@ -78,7 +79,7 @@ activate_detector_noise = False
 # To simulate the flux of a star, otherwise the incoming fluxes are equal to 1
 activate_flux = False
 # Use an achromatic phase mask instead of air-delaying (chromatic) one beam with respect to the other
-activate_achromatic_phase_shift = True
+activate_achromatic_phase_shift = False
 # To activate turbulence
 activate_turbulence = False
 # Use of photometric outputs
@@ -93,170 +94,42 @@ sz = 256
 oversz = 4
 
 # Set the values of the phase masks for both tricoupler and directional coupler for each beam
-# achromatic_phasemask_tricoupler = np.array([np.pi, 0.])
-# achromatic_phasemask_cocoupler = np.array([np.pi/2, 0.])
 achromatic_phasemask_tricoupler = np.array([np.pi, 0.])
 achromatic_phasemask_cocoupler = np.array([np.pi/2, 0.])
 
-# =============================================================================
-# Telescope and AO parameters
-# =============================================================================
-tdiam = 8.2 # Diameter of the telescope (in meter)
-subpup_diam = 1. # Diameter of the sub-pupils (in meter)
-baseline = 5.55 # Distance between two sub-pupils (in meter)
-fc_scex = 19.5 # 19.5 l/D is the cutoff frequency of the DM for 1200 modes corrected (source: Vincent)
-wavel_r0 = 0.5e-6 # wavelength where r0 is measured (in meters)
-wavel = 1.6e-6 # Wavelength of observation (in meter)
-bandwidth = 0.2e-6 # Bandwidth around the wavelength of observation (in meter)
-dwl = 5e-9 # Width of one spectral channel (in meter)
 
-if 1 == 0:
-    wavel = 0
-    bandwidth = 0
-    dwl = 0
-
-# sys.exit()
-
-meter2pixel = sz / tdiam # scale factor converting the meter-size in pixel, in pix/m
-ao_correc = 8. # How well the AO flattens the wavefront
-
-# =============================================================================
-# Atmo parameters
-# =============================================================================
-r0 = 0.16  # Fried parameter at wavelength wavel_r0 (in meters), the bigger, the better the seeing is
-ll = tdiam * oversz # Physical extension of the wavefront (in meter)
-L0 = 1e15 # Outer scale for the model of turbulence, keep it close to infinity for Kolmogorov turbulence (the simplest form) (in meter)
-wind_speed = 9.8 # speed of the wind (in m/s)
-angle = 45 # Direction of the wind
-
-# =============================================================================
-# Acquisition and detector parameters
-# =============================================================================
-fps = 2000 # frame rate (in Hz)
-delay = 0.001 # delay of the servo loop (in second)
-dit = 1 / fps # Detector Integration Time, time during which the detector collects photon (in second)
-timestep = 1e-4 # time step of the simulation (in second)
-time_obs = 0.1 # duration of observation (in second)
-
-# Let's define the axe of time on which any event will happened (turbulence, frame reading, servo loop)
-timeline = np.around(np.arange(0, time_obs+delay, timestep, dtype=cp.float32), int(-np.log10(timestep)))
-
-# Detector is CRED-1
-read_noise = 0.7 # Read noise of the detector (in e-)
-QE = 0.6 # Quantum efficiency (probability of detection of a photon by the detector)
-ndark = 50 # Dark current (false event occured because of the temperature) (in e-/pix/second)
-enf = 1. #1.25 # Excess noise factor due to the amplification process
-
-# # Detector is CRED-2
-# read_noise = 30 # Read noise of the detector (in e-)
-# QE = 0.8 # Quantum efficiency (probability of detection of a photon by the detector)
-# ndark = 1500 # Dark current (false event occured because of the temperature) (in e-/pix/second)
-
-# =============================================================================
-# Beam combiner
-# =============================================================================
-if activate_photometric_output:
-    # Fractions of intensity sent to photometric output
-    coeff_tri = 0.25
-    coeff_bi = 1/3.
-else:
-    coeff_tri = 0.
-    coeff_bi = 0.
-
-'''
-Transfer matrix of a tricoupler. Center row is the null output,
-phase and antinull is recovered from linear combinations of the three outputs (rows)
-
-Structure:
-    1st row = left output
-    2st row = null output
-    3rd row = right output
-    4th row = photometric output A
-    5th row = photometric output B
-'''
+# ============================================================================
+# Importing tricoupler and bicoupler data 
+# ============================================================================
 
 chromaticity = False
-chromaticity_tri = True
+chromaticity_tri = False
 
-# Loading in RSoft data for chromatic tricoupler
+# Tricoupler: RSoft data
 if chromaticity_tri:
     l_out = np.transpose(np.loadtxt("rsoft_coefficients/3DTriRatioCplLen1700Wvl14-17_Left_bp_mon_1_last.dat"))
     c_out = np.transpose(np.loadtxt("rsoft_coefficients/3DTriRatioCplLen1700Wvl14-17_Left_bp_mon_2_last.dat"))
     r_out = np.transpose(np.loadtxt("rsoft_coefficients/3DTriRatioCplLen1700Wvl14-17_Left_bp_mon_3_last.dat"))
     
-    wl = cp.array(l_out[0])
+    wl = cp.array(l_out[0])*1e-6
     t_coeff = l_out[1]**0.5
     c_coeff_c = c_out[1]**0.5
     c_coeff_r = r_out[1]**0.5
     
     c_coeff = np.mean(np.array([c_coeff_c, c_coeff_r]), axis=0) # taking an average FOR NOW; figure out what to do more specifically later
     
-    
+    # Note: re-writing t and c coefficients for now!!!
     # c_coeff = np.linspace(0, 2/3,56) # 56 spectral channels for now
-    # t_coeff = np.sqrt(1-2*(c_coeff**2))
+    c_coeff = np.full(56, 1/3)
+    t_coeff = np.sqrt(1-2*(c_coeff**2))
+    
+    wl = cp.linspace(1.5e-06, 1.7e-06, len(c_coeff))    
+    
     phi = np.arccos(-c_coeff / (2*t_coeff))
     ones = np.ones(phi.shape)
     z = np.zeros(phi.shape)
     
-    tricoupler = cp.asarray(np.array([[t_coeff * np.exp(1j*phi)                         , c_coeff  , z, z],
-                                      [c_coeff , c_coeff  , z, z],
-                                      [c_coeff , t_coeff * np.exp(1j*phi)                             , z, z],
-                                      [z                               , z                                , ones, z],
-                                      [z                               , z                                , z, ones]], dtype=np.complex64))
-
-else:
-    tricoupler = cp.asarray(np.array([[1/3**0.5                         , 1/3**0.5 * np.exp(1j* 2*np.pi/3)  , 0., 0.],
-                                  [1/3**0.5 * np.exp(1j* 2*np.pi/3) , 1/3**0.5 * np.exp(1j* 2*np.pi/3)  , 0., 0.],
-                                  [1/3**0.5 * np.exp(1j* 2*np.pi/3) , 1/3**0.5                          , 0., 0.],
-                                  [0.                               , 0.                                , 1., 0.],
-                                  [0.                               , 0.                                , 0., 1.]], dtype=np.complex64))
-
-
-if chromaticity_tri:
-    
-    coeff_tri = 0.25 * ones # mock splitting coefficients; all set to the same value for now
-    
-    tri_splitter = cp.array([[1-coeff_tri, z],
-                             [z         , 1-coeff_tri],
-                             [coeff_tri  , z],
-                             [z         , coeff_tri]], dtype=cp.float32)
-    tri_splitter = tri_splitter**0.5
-    
-    # Total combiner
-    combiner_tri = cp.einsum('ijk,jlk->ilk', tricoupler, tri_splitter)
-
-    
-else:
-    # Splitter before combining the beams to get the photometric tap
-    tri_splitter = cp.array([[1-coeff_tri, 0.],
-                             [0.         , 1-coeff_tri],
-                             [coeff_tri  , 0.],
-                             [0.         , coeff_tri]], dtype=cp.float32)
-    # The coefficients below are given for intensities although we deal with amplitude of wavefront
-    # so a square root must be applied to them
-    tri_splitter = tri_splitter**0.5
-    
-    # Total combiner
-    combiner_tri = tricoupler@tri_splitter
-
-'''
-Transfer matrix of a directional coupler.
-One output is the nulled signal, the other is the antinulled.
-
-Structure:
-    1st row = null output
-    2st row = antinull output
-    3rd row = fake output (for compatibility with the tricoupler when plotting the results)
-    4th row = photometric output A
-    5th row = photometric output B
-'''
-
-
-# =============================================================================
-# Coupling and splitting coefficients for chromatic case 
-# =============================================================================
-
-
+# Bicoupler: GLINT data
 one_baseline_data = False # GLINT data that used only one baseline (two apertures)
 if chromaticity:
     if one_baseline_data:
@@ -301,6 +174,8 @@ if chromaticity:
         wl = np.array(zeta_file['wl_scale']) # wavelength scale
         within = ((wl < 1650) & (wl > 1350)) # central wavelength 1550 +/- 100 nm
         wl = cp.array(wl[within] * 1e-9)
+        
+        zeta_file.close()
     
     
         # Coupling and splitting coefficients
@@ -316,18 +191,172 @@ if chromaticity:
         alpha_b2 = alpha_b2[within]
 
 
+# =============================================================================
+# Telescope and AO parameters
+# =============================================================================
+tdiam = 8.2 # Diameter of the telescope (in meter)
+subpup_diam = 1. # Diameter of the sub-pupils (in meter)
+baseline = 5.55 # Distance between two sub-pupils (in meter)
+fc_scex = 19.5 # 19.5 l/D is the cutoff frequency of the DM for 1200 modes corrected (source: Vincent)
+wavel_r0 = 0.5e-6 # wavelength where r0 is measured (in meters)
+# wavel = 1.6e-6 # Wavelength of observation (in meter)
+# wavel = float(np.mean(wl))
+bandwidth = 0.2e-6 # Bandwidth around the wavelength of observation (in meter)
+dwl = 5e-9 # Width of one spectral channel (in meter)
+
+if not chromaticity and not chromaticity_tri:
+    wavel = 1.6e-6 
+    wl = cp.arange(wavel-bandwidth/2, wavel+bandwidth/2, dwl, dtype=cp.float32)
+else:
+    wavel = float(np.mean(wl))
+    # wl should already be defined
+
+if 1 == 0:
+    wavel = 0
+    bandwidth = 0
+    dwl = 0
+
+meter2pixel = sz / tdiam # scale factor converting the meter-size in pixel, in pix/m
+ao_correc = 8. # How well the AO flattens the wavefront
+
+# =============================================================================
+# Atmo parameters
+# =============================================================================
+r0 = 0.16  # Fried parameter at wavelength wavel_r0 (in meters), the bigger, the better the seeing is
+ll = tdiam * oversz # Physical extension of the wavefront (in meter)
+L0 = 1e15 # Outer scale for the model of turbulence, keep it close to infinity for Kolmogorov turbulence (the simplest form) (in meter)
+wind_speed = 9.8 # speed of the wind (in m/s)
+angle = 45 # Direction of the wind
+
+# =============================================================================
+# Acquisition and detector parameters
+# =============================================================================
+fps = 2000 # frame rate (in Hz)
+delay = 0.001 # delay of the servo loop (in second)
+dit = 1 / fps # Detector Integration Time, time during which the detector collects photon (in second)
+timestep = 1e-4 # time step of the simulation (in second)
+time_obs = 0.1 #0.1 # duration of observation (in second)
+
+# Let's define the axe of time on which any event will happened (turbulence, frame reading, servo loop)
+timeline = np.around(np.arange(0, time_obs+delay, timestep, dtype=cp.float32), int(-np.log10(timestep)))
+
+# Detector is CRED-1
+read_noise = 0.7 # Read noise of the detector (in e-)
+QE = 0.6 # Quantum efficiency (probability of detection of a photon by the detector)
+ndark = 50 # Dark current (false event occured because of the temperature) (in e-/pix/second)
+enf = 1. #1.25 # Excess noise factor due to the amplification process
+
+# # Detector is CRED-2
+# read_noise = 30 # Read noise of the detector (in e-)
+# QE = 0.8 # Quantum efficiency (probability of detection of a photon by the detector)
+# ndark = 1500 # Dark current (false event occured because of the temperature) (in e-/pix/second)
+
+# =============================================================================
+# Beam combiner
+# =============================================================================
+if activate_photometric_output:
+    # Fractions of intensity sent to photometric output
+    coeff_tri = 0.25
+    coeff_bi = 1/3.
+else:
+    coeff_tri = 0.
+    coeff_bi = 0.
+
+'''
+Transfer matrix of a tricoupler. Center row is the null output,
+phase and antinull is recovered from linear combinations of the three outputs (rows)
+
+Structure:
+    1st row = left output
+    2st row = null output
+    3rd row = right output
+    4th row = photometric output A
+    5th row = photometric output B
+'''
+
+# Loading in RSoft data for chromatic tricoupler
+if chromaticity_tri:
+    
+    tricoupler = cp.asarray(np.array([[t_coeff * np.exp(1j*phi) , c_coeff                  , z    , z   ],
+                                      [c_coeff                  , c_coeff                  , z    , z   ],
+                                      [c_coeff                  , t_coeff * np.exp(1j*phi) , z    , z   ],
+                                      [z                        , z                        , ones , z   ],
+                                      [z                        , z                        , z    , ones]], dtype=np.complex64))
+
+else:
+    tricoupler = cp.asarray(np.array([[1/3**0.5                         , 1/3**0.5 * np.exp(1j* 2*np.pi/3)  , 0., 0.],
+                                      [1/3**0.5 * np.exp(1j* 2*np.pi/3) , 1/3**0.5 * np.exp(1j* 2*np.pi/3)  , 0., 0.],
+                                      [1/3**0.5 * np.exp(1j* 2*np.pi/3) , 1/3**0.5                          , 0., 0.],
+                                      [0.                               , 0.                                , 1., 0.],
+                                      [0.                               , 0.                                , 0., 1.]], dtype=np.complex64))
+
+    # Changing the tricoupler convention so phase shifts are on diagonals
+    # tricoupler = cp.asarray(np.array([[1/3**0.5 * np.exp(1j* 2*np.pi/3) , 1/3**0.5                          , 0., 0.],
+    #                                   [1/3**0.5                         , 1/3**0.5                          , 0., 0.],
+    #                                   [1/3**0.5                         , 1/3**0.5 * np.exp(1j* 2*np.pi/3)  , 0., 0.],
+    #                                   [0.                               , 0.                                , 1., 0.],
+    #                                   [0.                               , 0.                                , 0., 1.]], dtype=np.complex64))
+
+
+# Tri splitter
+
+if chromaticity_tri:
+    
+    coeff_tri = 0.25 * ones # mock splitting coefficients; all set to the same value for now
+    
+    tri_splitter = cp.array([[1-coeff_tri , z           ],
+                             [z           , 1-coeff_tri ],
+                             [coeff_tri   , z           ],
+                             [z           , coeff_tri   ]], dtype=cp.float32)
+    tri_splitter = tri_splitter**0.5
+    
+    # Total combiner
+    combiner_tri = cp.einsum('ijk,jlk->ilk', tricoupler, tri_splitter)
+
+    
+else:
+    # Splitter before combining the beams to get the photometric tap
+    tri_splitter = cp.array([[1-coeff_tri, 0.         ],
+                             [0.         , 1-coeff_tri],
+                             [coeff_tri  , 0.         ],
+                             [0.         , coeff_tri  ]], dtype=cp.float32)
+    # The coefficients below are given for intensities although we deal with amplitude of wavefront
+    # so a square root must be applied to them
+    tri_splitter = tri_splitter**0.5
+    
+    # Total combiner
+    combiner_tri = tricoupler@tri_splitter
+
+'''
+Transfer matrix of a directional coupler.
+One output is the nulled signal, the other is the antinulled.
+
+Structure:
+    1st row = null output
+    2st row = antinull output
+    3rd row = fake output (for compatibility with the tricoupler when plotting the results)
+    4th row = photometric output A
+    5th row = photometric output B
+'''
+
+
+# =============================================================================
+# Coupling and splitting coefficients for chromatic case 
+# =============================================================================
+
+
 if chromaticity:
     z = np.zeros(len(kappa_12))
     ones = np.ones(len(kappa_12))
 
-    bicoupler = cp.asarray(np.array([[(1-kappa_12)**0.5                      , kappa_12**0.5 * np.exp(-1j* np.pi/2) , z   , z   ],
-                                     [kappa_21**0.5 * np.exp(-1j* np.pi/2) , (1-kappa_21)**0.5                        , z   , z   ],
-                                     [z                            , z                            , z   , z   ],
-                                     [z                            , z                            , ones, z   ],
-                                     [z                            , z                            , z   , ones]], dtype=np.complex64))
+    bicoupler = cp.asarray(np.array([[(1-kappa_12)**0.5                    , kappa_12**0.5 * np.exp(-1j* np.pi/2) , z    , z   ],
+                                     [kappa_21**0.5 * np.exp(-1j* np.pi/2) , (1-kappa_21)**0.5                    , z    , z   ],
+                                     [z                                    , z                                    , z    , z   ],
+                                     [z                                    , z                                    , ones , z   ],
+                                     [z                                    , z                                    , z    , ones]], dtype=np.complex64))
 
 else:
-    bicoupler = cp.asarray(np.array([[1.0/2**0.5                        , 1.0/2**0.5 * np.exp(-1j* np.pi/2) , 0., 0.],
+    bicoupler = cp.asarray(np.array([[1.0/2**0.5                         , 1.0/2**0.5 * np.exp(-1j* np.pi/2) , 0., 0.],
                                       [1.0/2**0.5 * np.exp(-1j* np.pi/2) , 1.0/2**0.5                        , 0., 0.],
                                       [0.0                               , 0.0                               , 0., 0.],
                                       [0.0                               , 0.                                , 1., 0.],
@@ -335,10 +364,10 @@ else:
 
 
 if chromaticity:
-    bi_splitter = cp.array([[(1-alpha_b1) , z      ],
-                            [z       , (1-alpha_b2)],
-                            [(alpha_b1)  , z      ],
-                            [z       , (alpha_b2)  ]], dtype=cp.complex64)
+    bi_splitter = cp.array([[(1-alpha_b1) , z           ],
+                            [z            , (1-alpha_b2)],
+                            [(alpha_b1)   , z           ],
+                            [z            , (alpha_b2)  ]], dtype=cp.complex64)
 
     # The coefficients below are given for intensities although we deal with amplitude of wavefront
     # so a square root must be applied to them
@@ -373,7 +402,7 @@ baselinep = baseline / tdiam * sz
 # Servo loop parameters
 # =============================================================================
 servo_gain = 0.
-servo_int = 0.# 1.#0.05 # 0: no fringe tracking, 1.: fringe trcking at high flux, 0.05: fringe tracking at low flux (SNR<=2)
+servo_int = 1.# 1.#0.05 # 0: no fringe tracking, 1.: fringe trcking at high flux, 0.05: fringe tracking at low flux (SNR<=2)
 err_int = cp.array([0.], dtype=cp.float32)
 diff_piston_command = cp.array([0.], dtype=cp.float32)
 
@@ -419,11 +448,6 @@ debug = []
 # =============================================================================
 start = timer()
 
-# Create the spectral dispersion
-if not chromaticity and not chromaticity_tri:
-    wl = cp.arange(wavel-bandwidth/2, wavel+bandwidth/2, dwl, dtype=cp.float32)
-    # if chromaticity == True, then wl is defined earlier when data file is opened 
-
 # Create the sub-pupil
 pupil = lib.createSubPupil(sz, int(subpup_diamp//2), baselinep, 5, norm=False)
 pupil = cp.array(pupil , dtype=cp.float32)
@@ -467,7 +491,10 @@ i_out_bi = cp.zeros((5, wl.size), dtype=cp.float32)
 # Loop over simulated time
 # =============================================================================
 
-for t in tqdm(timeline):
+pups_A = np.linspace(-100.*wavel, 100*wavel, timeline.size)
+
+
+for index, t in enumerate(tqdm(timeline)):
     phs_screen_moved, xyshift = lib.movePhaseScreen(phs_screen, wind_speed, angle, t-TIME_OFFSET, meter2pixel)
     if xyshift[0] > phs_screen.shape[0] or xyshift[1] > phs_screen.shape[1]:
         if seed != None:
@@ -475,6 +502,9 @@ for t in tqdm(timeline):
         phs_screen = lib.generatePhaseScreen(wavel_r0, sz*oversz, ll, r0, L0, fc=fc_scex, correc=9, pdiam=tdiam, seed=None)
         phs_screen = cp.array(phs_screen, dtype=cp.float32)
         TIME_OFFSET = t
+    
+    # plt.imshow(cp.asnumpy(phs_screen_moved)) # checking this works for now
+    # plt.show()
 
     shifts.append(xyshift)
     # We stay in phase space hence the simple multiplication below to crop the wavefront.
@@ -483,6 +513,8 @@ for t in tqdm(timeline):
 
     # Measure the piston of the subpupils
     piston_pupA = cp.mean(phs_pup[:,:sz//2][pupil[:,:sz//2]!=0], keepdims=True)
+    # piston_pupA = 3.*wavel # setting piston_pupA to a const value
+    # piston_pupA = pups_A[index] # setting piston_pupA to a ramp
     piston_pupB = cp.mean(phs_pup[:,sz//2:][pupil[:,sz//2:]!=0], keepdims=True)
 
     # Measure the differential atmospheric piston
@@ -493,7 +525,6 @@ for t in tqdm(timeline):
     diff_piston = cp.array([DIFF_PISTON_REF + diff_piston_atm[0]], dtype=cp.float32) # pupil A - pupil B
     diff_piston_corrected = diff_piston - diff_piston_command[0]
 
-
     injection = cp.array([lib.calculateInjection(phs_pup[:,:sz//2][pupil[:,:sz//2]!=0], wl), \
                           lib.calculateInjection(phs_pup[:,sz//2:][pupil[:,sz//2:]!=0], wl)])
     injections.append(injection)
@@ -503,7 +534,7 @@ for t in tqdm(timeline):
                      cp.exp(1j*2*cp.pi/wl*piston_pupB                           + 1j*achromatic_phasemask_tricoupler[1])],\
                     dtype=cp.complex64)
         
-    # a_in[0] = cp.zeros(len(a_in[0]))
+    # a_in[1] = cp.zeros(len(a_in[1])) # right input is 0; right input only
     # sys.exit()
 
     if activate_flux:
@@ -514,7 +545,12 @@ for t in tqdm(timeline):
     else:
         a_out = combiner_tri@a_in # Deduce the outcoming wavefront after the integrated-optics device
     i_out += cp.abs(a_out)**2
-
+    # count += 1
+    # if count==50:
+    #     print(i_out)
+    #     sys.exit()
+    # print(diff_piston_command)
+    
     # Same but with no fringe tracking
     a_in_noft = cp.array([cp.exp(1j*2*cp.pi/wl*(piston_pupA)    + 1j*achromatic_phasemask_tricoupler[0]),\
                           cp.exp(1j*2*cp.pi/wl*piston_pupB      + 1j*achromatic_phasemask_tricoupler[1])],\
@@ -547,8 +583,6 @@ for t in tqdm(timeline):
 
     else:
         a_out_bi = combiner_bi@a_in_bi
-
-
 
     i_out_bi += cp.abs(a_out_bi)**2
 
@@ -610,6 +644,7 @@ for t in tqdm(timeline):
         injections_ft.append(injection_toft)
         time_ft.append(t)
         count_delay = 1
+        
 
 
 
@@ -707,20 +742,20 @@ if save:
 # print('---')
 # print('Med and std null depth with FT', np.median(null_depth.mean(1)), np.std(null_depth.mean(1)))
 # print('Med and std null depth no FT', np.median(null_depth_noft.mean(1)), np.std(null_depth_noft.mean(1)))
-print('Med and std null depth with BI', np.median(null_depth_bi.mean(1)), np.std(null_depth_bi.mean(1)))
+# print('Med and std null depth with BI', np.median(null_depth_bi.mean(1)), np.std(null_depth_bi.mean(1)))
 
-# # if couplertype == 'tricoupler':
-# plt.figure(1)
-# plt.plot(timeline, diff_pistons_atm/wavel, label='Atmospheric differential piston')
-# plt.plot(time_ft, diff_pistons_measured/wavel, '.', label='Corrected differential piston')
-# plt.plot(time_ft, (diff_pistons_measured_noft)/wavel, 'x', label='Measured atmospheric differential piston')
+# if couplertype == 'tricoupler':
+plt.figure(1)
+plt.plot(timeline, diff_pistons_atm/wavel, 'x', c='skyblue', label='Atmospheric differential piston')
+plt.plot(time_ft, diff_pistons_measured/wavel, '.', c='darkorange', label='Corrected differential piston')
+plt.plot(time_ft, (diff_pistons_measured_noft)/wavel, c='red', label='Measured atmospheric differential piston')
 # plt.plot(timeline, diff_pistons_bi/wavel, '.', label='Differential piston in Co-coupler')
-# plt.plot(timeline, DIFF_PISTON_REF/wavel*np.ones(timeline.size), '-', c='k', label='Differential piston reference')
+plt.plot(timeline, DIFF_PISTON_REF/wavel*np.ones(timeline.size), '-', c='k', label='Differential piston reference')
 # plt.plot(timeline, DIFF_PISTON_REFBI/wavel*np.ones(timeline.size), '--', c='k', label='Differential piston reference (co-coupler)')
-# plt.grid()
-# plt.legend(loc='best')
-# plt.xlabel('Delay (count)')
-# plt.ylabel('Piston (wl0)')
+plt.grid()
+plt.legend(loc='best')
+plt.xlabel('Delay (count)')
+plt.ylabel('Piston (wl0)')
 
 # plt.figure(2)
 # plt.plot(diff_pistons_atm/wavel, diff_pistons_atm/wavel, label='Atmospheric differential piston')
@@ -734,7 +769,7 @@ print('Med and std null depth with BI', np.median(null_depth_bi.mean(1)), np.std
 # plt.xlabel('Atm piston (wl0)')
 # plt.ylabel('Piston (wl0)')
 
-# colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
+colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
 # plt.figure(3)
 # plt.plot(diff_pistons_fr/wavel, noisy_data[1].mean(1), '.', c=colors[0], label='Null')
 # plt.plot(diff_pistons_fr/wavel, antinull.mean(1), 'x', c=colors[0], label='Antinull')
@@ -778,16 +813,17 @@ print('Med and std null depth with BI', np.median(null_depth_bi.mean(1)), np.std
 # plt.ylabel('Null depth')a
 
 
-# Plotting interferometric outputs wrt wavelength
+# # Plotting bicoupler interferometric outputs wrt wavelength
 # plt.figure(7)
 # plt.plot(cp.ndarray.get(wl), np.median(noisy_data_bi[0], axis=0), '+', label='Null')
 # plt.plot(cp.ndarray.get(wl), np.median(antinull_bi, axis=0), '*', label='Antinull')
 # plt.plot(cp.ndarray.get(wl), np.median(antinull_bi, axis=0) + np.median(noisy_data_bi[0], axis=0), label='Total')
 # plt.legend(loc='best')
-# plt.xlabel('Wavelength, lambda')
+# plt.xlabel('Wavelength (microns)')
 # plt.ylabel('Intensity')
+# plt.grid(which='major')
 
-# # Plotting intensity (photometric, interfe documentatiorometric, total) wrt wavelength
+# # Plotting bicoupler intensity (photometric, interfe documentatiorometric, total) wrt wavelength
 # plt.figure(8)
 # plt.plot(cp.ndarray.get(wl), np.median(noisy_data_bi[3], axis=0), label='photometric 1')
 # plt.plot(cp.ndarray.get(wl), np.median(noisy_data_bi[4], axis=0), label = 'photometric 2')
@@ -809,7 +845,7 @@ phot_right = np.median(noisy_data[4], axis=0)
 plt.figure(9)
 plt.plot(cp.asnumpy(wl), left_out, linestyle='dashdot', label='left output')
 plt.plot(cp.asnumpy(wl), null_out, linestyle='dashdot', label='null output')
-plt.plot(cp.asnumpy(wl), right_out, '+', label='right output')
+plt.plot(cp.asnumpy(wl), right_out, linestyle='dashdot', label='right output')
 plt.plot(cp.asnumpy(wl), left_out + null_out + right_out, linestyle='dashdot', label='total') 
 plt.xlabel('Wavelength (microns)')
 plt.ylabel('Intensity')
@@ -827,16 +863,15 @@ plt.grid(which='major')
 # plt.grid(which='major')
 
 
-# # aim: plot the output phase difference between left and right outputs as a fn of wavelength. require the intensities as fns of wavelength for the tricoupler? 
-
-# diff_angle = (3**0.5) * np.arctan((left_out - right_out) / (left_out + right_out - 2*null_out))
-# out_piston = (cp.asnumpy(wl)/2*np.pi) * diff_angle
-# plt.figure(10)
-# plt.plot(cp.asnumpy(wl), out_piston, '+', label='differential phase')
-# plt.ylabel("Phase difference between left and right outputs")
-# plt.xlabel("Wavelength (microns)")
+# Plotting the coupling coefficient (to middle waveguide) as well as null output wrt wavelength (turn off atmospheric turb)
+# plt.figure(11)
+# plt.plot(cp.asnumpy(wl), c_coeff, '+', label='Coupling coeff')
+# plt.plot(cp.asnumpy(wl), t_coeff, '+', label='Transmission coeff')
+# plt.plot(cp.asnumpy(wl), null_out, linestyle='dashdot', label='null output')
+# plt.xlabel('Wavelength')
+# plt.ylabel('Intensity/etc')
 # plt.legend(loc='best')
-# plt.grid(which='major')
+# plt.grid(True)
 
 
 
