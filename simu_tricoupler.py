@@ -75,8 +75,14 @@ activate_flux = False
 activate_achromatic_phase_shift = False
 # To activate turbulence
 activate_turbulence = False
+# Choose OPD between turbulence (0), constant value (1) or ramp (2)
+turbulence_mode = 1
 # Use of photometric outputs
 activate_photometric_output = True
+# Use chromatic directional coupler
+activate_chromatic_bicoupler = True
+# Use chromatic tricoupler
+activate_chromatic_tricoupler = True
 
 # Set the seed to an integer for repeatable simulation, to ``None'' otherwise
 seed = 1
@@ -89,6 +95,11 @@ oversz = 4
 # Set the values of the phase masks for both tricoupler and directional coupler for each beam
 achromatic_phasemask_tricoupler = np.array([np.pi, 0.])
 achromatic_phasemask_cocoupler = np.array([np.pi/2, 0.])
+
+zeta_path = '20210322_zeta_coeff_raw.hdf5'
+path_tricoupler_left = '3DTriRatioCplLen1700Wvl14-17_Left_bp_mon_1_last.dat'
+path_tricoupler_centre = '3DTriRatioCplLen1700Wvl14-17_Left_bp_mon_2_last.dat'
+path_tricoupler_right = '3DTriRatioCplLen1700Wvl14-17_Left_bp_mon_3_last.dat'
 
 # =============================================================================
 # Telescope and AO parameters
@@ -144,87 +155,6 @@ enf = 1.  # 1.25 # Excess noise factor due to the amplification process
 # QE = 0.8 # Quantum efficiency (probability of detection of a photon by the detector)
 # ndark = 1500 # Dark current (false event occured because of the temperature) (in e-/pix/second)
 
-# =============================================================================
-# Beam combiner
-# =============================================================================
-if activate_photometric_output:
-    # Fractions of intensity sent to photometric output
-    coeff_tri = 0.25
-    coeff_bi = 1/3.
-else:
-    coeff_tri = 0.
-    coeff_bi = 0.
-
-'''
-Transfer matrix of a tricoupler. Center row is the null output, 
-phase and antinull is recovered from linear combinations of the three outputs (rows)
-
-Structure:
-    1st row = left output
-    2st row = null output
-    3rd row = right output
-    4th row = photometric output A
-    5th row = photometric output B
-'''
-tricoupler = cp.asarray(np.array([[1/3**0.5, 1/3**0.5 * np.exp(1j * 2*np.pi/3), 0., 0.],
-                                  [1/3**0.5 * np.exp(1j * 2*np.pi/3), 1/3 **
-                                   0.5 * np.exp(1j * 2*np.pi/3), 0., 0.],
-                                  [1/3**0.5 *
-                                      np.exp(1j * 2*np.pi/3), 1/3**0.5, 0., 0.],
-                                  [0., 0., 1., 0.],
-                                  [0., 0., 0., 1.]], dtype=np.complex64))
-
-# Splitter before combining the beams to get the photometric tap
-tri_splitter = cp.array([[1-coeff_tri, 0.],
-                         [0., 1-coeff_tri],
-                         [coeff_tri, 0.],
-                         [0., coeff_tri]], dtype=cp.float32)
-# The coefficients below are given for intensities although we deal with amplitude of wavefront
-# so a square root must be applied to them
-tri_splitter = tri_splitter**0.5
-
-# Total combiner
-combiner_tri = tricoupler@tri_splitter
-
-
-'''
-Transfer matrix of a directional coupler. 
-One output is the nulled signal, the other is the antinulled.
-
-Structure:
-    1st row = null output
-    2st row = antinull output
-    3rd row = fake output (for compatibility with the tricoupler when plotting the results)
-    4th row = photometric output A
-    5th row = photometric output B
-'''
-bicoupler = cp.asarray(np.array([[1.0/2**0.5, 1.0/2**0.5 * np.exp(-1j * np.pi/2), 0., 0.],
-                                 [1.0/2**0.5 *
-                                     np.exp(-1j * np.pi/2), 1.0/2**0.5, 0., 0.],
-                                 [0.0, 0.0, 0., 0.],
-                                 [0.0, 0., 1., 0.],
-                                 [0., 0., 0., 1.]], dtype=np.complex64))
-
-# Splitter before combining the beams to get the photometric tap
-bi_splitter = cp.array([[1-coeff_bi, 0.],
-                        [0., 1-coeff_bi],
-                        [coeff_bi, 0.],
-                        [0., coeff_bi]], dtype=cp.float32)
-
-# The coefficients below are given for intensities although we deal with amplitude of wavefront
-# so a square root must be applied to them
-bi_splitter = bi_splitter**0.5
-
-# Total combiner
-combiner_bi = bicoupler@bi_splitter
-
-
-# =============================================================================
-# Convert physical quantities in pixel
-# =============================================================================
-pupil_rad = sz // 2
-subpup_diamp = subpup_diam / tdiam * sz
-baselinep = baseline / tdiam * sz
 
 # =============================================================================
 # Servo loop parameters
@@ -254,6 +184,40 @@ magnitude = -6
 # e.g. An H=5 object gives 1 ph/cm^2/s/A
 MAG0FLUX = 1e10  # ph/um/s/m^2
 SCEXAO_THROUGHPUT = 0.2
+
+# =============================================================================
+# Misc
+# =============================================================================
+"""
+Phase mask may be completely shifted.
+To prevent aliasing, a new mask is created and the time to calculate the shift
+is offseted.
+"""
+# time offset of the shift of the mask after creation of a new one
+TIME_OFFSET = 0.
+count_delay = 1
+count_dit = 1
+debug = []
+
+# =============================================================================
+# Convert physical quantities in pixel
+# =============================================================================
+pupil_rad = sz // 2
+subpup_diamp = subpup_diam / tdiam * sz
+baselinep = baseline / tdiam * sz
+
+# =============================================================================
+# Fool-proof
+# =============================================================================
+if turbulence_mode not in [0, 1, 2]:
+    raise Exception('Select a turbulence mode: atmospherique turbulence\
+                        (0), constant value (1), phase ramp (2)')
+
+# =============================================================================
+# Run
+# =============================================================================
+start = timer()
+
 pupil_area = np.pi / 4 * subpup_diam**2
 
 star_photons = MAG0FLUX * 10**(-0.4*magnitude) * \
@@ -261,42 +225,60 @@ star_photons = MAG0FLUX * 10**(-0.4*magnitude) * \
 print('Star photo-electrons', star_photons *
       QE, (star_photons*QE)**0.5)
 
-# =============================================================================
-# Misc
-# =============================================================================
 """
-Phase mask may be completely shifted.
-To prevent aliasing, a new mask is created and the time to calculate the shift 
-is offseted.
+Create the spectral dispersion
 """
-TIME_OFFSET = 0.  # time offset of the shift of the mask after creation of a new one
-count_delay = 1
-count_dit = 1
-debug = []
-
-# =============================================================================
-# Run
-# =============================================================================
-start = timer()
-
-# Create the spectral dispersion
 wl = cp.arange(wavel-bandwidth/2, wavel+bandwidth/2, dwl, dtype=cp.float32)
 
-# Create the sub-pupil
+"""
+Beam combiner
+"""
+if activate_photometric_output:
+    # Fractions of intensity sent to photometric output
+    coeff_tri = 1/4. * np.ones(wl.shape)
+    coeff_bi = 1/3. * np.ones(wl.shape)
+else:
+    coeff_tri = 0.
+    coeff_bi = 0.
+
+# Create combiners
+if activate_chromatic_tricoupler:
+    t_coeff, c_coeff = lib.get_tricoupler_coeffs(
+        path_tricoupler_left, path_tricoupler_centre,
+        path_tricoupler_right, cp.asnumpy(wl))
+else:
+    t_coeff = c_coeff = 1/3**0.5 * np.ones(wl.shape)
+combiner_tri = lib.get_tricombiner(t_coeff, c_coeff, coeff_tri, coeff_tri)
+
+if activate_chromatic_bicoupler:
+    alpha_b1, alpha_b2, kappa_12, kappa_21 =\
+        lib.get_bicoupler_coeffs(zeta_path, cp.asnumpy(wl))
+else:
+    alpha_b1 = alpha_b2 = coeff_bi
+    kappa_12 = kappa_21 = 0.5 * np.ones(wl.shape)
+
+combiner_bi = lib.get_bicombiner(alpha_b1, alpha_b2, kappa_12, kappa_21)
+
+"""
+Create the sub-pupil
+"""
 pupil = lib.createSubPupil(sz, int(subpup_diamp//2), baselinep, 5, norm=False)
 pupil = cp.array(pupil, dtype=cp.float32)
 
-# Create the phase screen.
+"""
+Create the phase screen
+"""
 if activate_turbulence:
     phs_screen = lib.generatePhaseScreen(
-        wavel_r0, sz*oversz, ll, r0, L0, fc=fc_scex, correc=ao_correc, pdiam=tdiam, seed=seed)
+        wavel_r0, sz*oversz, ll, r0, L0, fc=fc_scex, correc=ao_correc,
+        pdiam=tdiam, seed=seed)
     phs_screen = cp.array(phs_screen, dtype=cp.float32)
 else:
     phs_screen = cp.zeros((sz*oversz, sz*oversz), dtype=cp.float32)
 
-# =============================================================================
-# Initiate storage lists
-# =============================================================================
+"""
+Initialise storage lists
+"""
 data = []
 noisy_data = []
 data_noft = []
@@ -322,9 +304,9 @@ i_out = cp.zeros((5, wl.size), dtype=cp.float32)
 i_out_noft = cp.zeros((5, wl.size), dtype=cp.float32)
 i_out_bi = cp.zeros((5, wl.size), dtype=cp.float32)
 
-# =============================================================================
-# Loop over simulated time
-# =============================================================================
+"""
+Loop over timeline
+"""
 for t in timeline:
     phs_screen_moved, xyshift = lib.movePhaseScreen(
         phs_screen, wind_speed, angle, t-TIME_OFFSET, meter2pixel)
@@ -332,7 +314,8 @@ for t in timeline:
         if seed != None:
             seed += 20
         phs_screen = lib.generatePhaseScreen(
-            wavel_r0, sz*oversz, ll, r0, L0, fc=fc_scex, correc=9, pdiam=tdiam, seed=None)
+            wavel_r0, sz*oversz, ll, r0, L0, fc=fc_scex, correc=9, pdiam=tdiam,
+            seed=None)
         phs_screen = cp.array(phs_screen, dtype=cp.float32)
         TIME_OFFSET = t
 
@@ -341,16 +324,19 @@ for t in timeline:
     phs_pup = pupil * phs_screen_moved[phs_screen_moved.shape[0]//2-sz//2:phs_screen_moved.shape[0]//2+sz//2,
                                        phs_screen_moved.shape[1]//2-sz//2:phs_screen_moved.shape[1]//2+sz//2]
 
-    # Measure the piston of the subpupils
-    piston_pupA = cp.mean(
-        phs_pup[:, :sz//2][pupil[:, :sz//2] != 0], keepdims=True)
-    piston_pupB = cp.mean(
-        phs_pup[:, sz//2:][pupil[:, sz//2:] != 0], keepdims=True)
-    # piston_pupA = cp.linspace(
-    #     -100*wavel, 100*wavel, timeline.size, dtype=cp.float32)
-    # piston_pupA[:] = wavel
-    piston_pupA = 3*wavel
-    piston_pupB[:] = 0.
+    if turbulence_mode == 0:
+        # Measure the piston of the subpupils
+        piston_pupA = cp.mean(
+            phs_pup[:, :sz//2][pupil[:, :sz//2] != 0], keepdims=True)
+        piston_pupB = cp.mean(
+            phs_pup[:, sz//2:][pupil[:, sz//2:] != 0], keepdims=True)
+    elif turbulence_mode == 1:
+        piston_pupA = cp.array([wavel], dtype=cp.float32)
+        piston_pupB = cp.array([0.], dtype=cp.float32)
+    elif turbulence_mode == 2:
+        piston_pupA = cp.linspace(-100*wavel, 100*wavel, timeline.size,
+                                  dtype=cp.float32)[list(timeline).index(t)]
+        piston_pupB = cp.array([0.], dtype=cp.float32)
 
     # Measure the differential atmospheric piston
     diff_piston_atm = piston_pupA - piston_pupB
@@ -360,24 +346,24 @@ for t in timeline:
     diff_piston = cp.array(
         [DIFF_PISTON_REF + diff_piston_atm[0]], dtype=cp.float32)  # pupil A - pupil B
 
-    if list(timeline).index(t) == 0:
-        print('plop')
-        diff_piston_corrected = cp.zeros((1,), dtype=cp.float32)
-    else:
-        diff_piston_corrected = diff_piston - diff_piston_command[0]
+    diff_piston_corrected = diff_piston - diff_piston_command[0]
 
     injection = cp.array([lib.calculateInjection(phs_pup[:, :sz//2][pupil[:, :sz//2] != 0], wl),
                           lib.calculateInjection(phs_pup[:, sz//2:][pupil[:, sz//2:] != 0], wl)])
     injections.append(injection)
 
     # Input wavefronts
-    a_in = cp.array([cp.exp(1j*2*cp.pi/wl*(piston_pupA + diff_piston_corrected) + 1j*achromatic_phasemask_tricoupler[0]),
+    internal_dl = DIFF_PISTON_REF - diff_piston_command[0]
+    a_in = cp.array([cp.exp(1j*2*cp.pi/wl*(piston_pupA + internal_dl) + 1j*achromatic_phasemask_tricoupler[0]),
                      cp.exp(1j*2*cp.pi/wl*piston_pupB + 1j*achromatic_phasemask_tricoupler[1])],
                     dtype=cp.complex64)
+    # a_in = cp.array([cp.exp(1j*2*cp.pi/wl*(piston_pupA + diff_piston_corrected) + 1j*achromatic_phasemask_tricoupler[0]),
+    #                  cp.exp(1j*2*cp.pi/wl*piston_pupB + 1j*achromatic_phasemask_tricoupler[1])],
+    #                 dtype=cp.complex64)
     if activate_flux:
         a_in *= injection**0.5 * star_photons**0.5
     # Deduce the outcoming wavefront after the integrated-optics device
-    a_out = combiner_tri@a_in
+    a_out = cp.einsum('ijk,jk->ik', combiner_tri, a_in)
     i_out += cp.abs(a_out)**2
 
     # Same but with no fringe tracking
@@ -386,19 +372,20 @@ for t in timeline:
                          dtype=cp.complex64)
     if activate_flux:
         a_in_noft *= injection**0.5 * star_photons**0.5
-    a_out_noft = combiner_tri@a_in_noft
+    a_out_noft = cp.einsum('ijk,jk->ik', combiner_tri, a_in_noft)
     i_out_noft += cp.abs(a_out_noft)**2
 
     # Same but with codirectional coupler
+    internal_dl_bi = DIFF_PISTON_REFBI
     diff_piston_bi = cp.array(
-        [DIFF_PISTON_REFBI + diff_piston_atm[0]], dtype=cp.float32)  # pupil 1 - pupil 2
+        [internal_dl_bi + diff_piston_atm[0]], dtype=cp.float32)  # pupil 1 - pupil 2
     diff_pistons_bi.append(diff_piston_bi)
-    a_in_bi = cp.array([cp.exp(1j*2*cp.pi/wl*(piston_pupA + diff_piston_bi) + 1j*achromatic_phasemask_cocoupler[0]),
+    a_in_bi = cp.array([cp.exp(1j*2*cp.pi/wl*(piston_pupA + internal_dl_bi) + 1j*achromatic_phasemask_cocoupler[0]),
                         cp.exp(1j*2*cp.pi/wl*(piston_pupB) + 1j*achromatic_phasemask_cocoupler[1])],
                        dtype=cp.complex64)
     if activate_flux:
         a_in_bi *= injection**0.5 * star_photons**0.5
-    a_out_bi = combiner_bi@a_in_bi
+    a_out_bi = cp.einsum('ijk,jk->ik', combiner_bi, a_in_bi)
     i_out_bi += cp.abs(a_out_bi)**2
 
     if count_dit < dit/timestep:
@@ -560,14 +547,15 @@ print('Med and std null depth with BI', np.median(
 
 # if couplertype == 'tricoupler':
 plt.figure(1)
+plt.clf()
 plt.plot(timeline, diff_pistons_atm/wavel,
          label='Atmospheric differential piston')
 plt.plot(time_ft, diff_pistons_measured/wavel, '.',
          label='Corrected differential piston')
-# plt.plot(time_ft, (diff_pistons_measured_noft)/wavel, 'x',
-#          label='Measured atmospheric differential piston')
-# plt.plot(timeline, diff_pistons_bi/wavel, '.',
-#          label='Differential piston in Co-coupler')
+plt.plot(time_ft, (diff_pistons_measured_noft)/wavel, 'x',
+         label='Measured atmospheric differential piston')
+plt.plot(timeline, diff_pistons_bi/wavel, '.',
+         label='Differential piston in Co-coupler')
 plt.plot(timeline, DIFF_PISTON_REF/wavel*np.ones(timeline.size),
          '-', c='k', label='Differential piston reference')
 plt.plot(timeline, DIFF_PISTON_REFBI/wavel*np.ones(timeline.size),
@@ -576,9 +564,9 @@ plt.grid()
 plt.legend(loc='best')
 plt.xlabel('Delay (count)')
 plt.ylabel('Piston (wl0)')
-ppp
 
 plt.figure(2)
+plt.clf()
 plt.plot(diff_pistons_atm/wavel, diff_pistons_atm /
          wavel, label='Atmospheric differential piston')
 plt.plot(diff_pistons_ft/wavel, diff_pistons_measured /
