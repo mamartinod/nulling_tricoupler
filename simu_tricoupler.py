@@ -97,9 +97,15 @@ achromatic_phasemask_tricoupler = np.array([np.pi, 0.])
 achromatic_phasemask_cocoupler = np.array([np.pi/2, 0.])
 
 zeta_path = '20210322_zeta_coeff_raw.hdf5'
-path_tricoupler_left = '3DTriRatioCplLen1700Wvl14-17_Left_bp_mon_1_last.dat'
-path_tricoupler_centre = '3DTriRatioCplLen1700Wvl14-17_Left_bp_mon_2_last.dat'
-path_tricoupler_right = '3DTriRatioCplLen1700Wvl14-17_Left_bp_mon_3_last.dat'
+path_tricoupler_left = ['3DTriRatioCplLen1700Wvl14-17_Left_bp_mon_1_last.dat',
+                        '3DTriRatioCplLen1700Wvl14-17_Left_bp_mon_2_last.dat',
+                        '3DTriRatioCplLen1700Wvl14-17_Left_bp_mon_3_last.dat']
+path_tricoupler_centre = ['3DTriRatioCplLen1700Wvl14-17_Centre_bp_mon_1_last.dat',
+                          '3DTriRatioCplLen1700Wvl14-17_Centre_bp_mon_2_last.dat',
+                          '3DTriRatioCplLen1700Wvl14-17_Centre_bp_mon_3_last.dat']
+path_tricoupler_right = ['3DTriRatioCplLen1700Wvl14-17_Right_bp_mon_1_last.dat',
+                         '3DTriRatioCplLen1700Wvl14-17_Right_bp_mon_2_last.dat',
+                         '3DTriRatioCplLen1700Wvl14-17_Right_bp_mon_3_last.dat']
 
 # =============================================================================
 # Telescope and AO parameters
@@ -243,12 +249,12 @@ else:
 
 # Create combiners
 if activate_chromatic_tricoupler:
-    t_coeff, c_coeff = lib.get_tricoupler_coeffs(
+    t1, t2, c1, c2 = lib.get_tricoupler_coeffs2(
         path_tricoupler_left, path_tricoupler_centre,
         path_tricoupler_right, cp.asnumpy(wl))
 else:
-    t_coeff = c_coeff = 1/3**0.5 * np.ones(wl.shape)
-combiner_tri = lib.get_tricombiner(t_coeff, c_coeff, coeff_tri, coeff_tri)
+    t1 = t2 = c1 = c2 = 1/3**0.5 * np.ones(wl.shape)
+combiner_tri = lib.get_tricombiner2(t1, t2, c1, c2, coeff_tri, coeff_tri)
 
 if activate_chromatic_bicoupler:
     alpha_b1, alpha_b2, kappa_12, kappa_21 =\

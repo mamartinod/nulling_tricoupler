@@ -9,6 +9,7 @@ import numpy as np
 import cupy as cp
 from itertools import combinations
 import h5py
+import matplotlib.pyplot as plt
 
 
 def atmo_screen(isz, ll, r0, L0, fc=19.5, correc=1.0, pdiam=None, seed=None):
@@ -282,8 +283,51 @@ def measurePhase3(data, wl):
 
 
 def get_tricombiner(t_coeff, c_coeff, s1, s2):
+    """Calculate the transfer matrix of the photonic combiner.
+
+    DEPRECATED !!!
+
+    :param t_coeff: transmission coefficient for several wavelengths
+    :type t_coeff: array
+    :param c_coeff: coupling coefficient for several wavelengths
+    :type c_coeff: array
+    :param s1: splitting coefficient of beam 1 for several wavelengths
+    :type s1: array
+    :param s2: splitting coefficient of beam 1 for several wavelengths
+    :type s2: array
+    :return combiner_tri: Spectral matrix of the combiner
+    :rtype: 3D-array
+
+    """
     tri_splitter = get_splitter(s1, s2)
     tricoupler = get_tricoupler(t_coeff, c_coeff)
+    combiner_tri = cp.einsum('ijk,jlk->ilk', tricoupler, tri_splitter)
+
+    return combiner_tri
+
+
+def get_tricombiner2(t1, t2, c1, c2, s1, s2):
+    """Calculate the transfer matrix of the photonic combiner.
+
+    :param t1: transmission coefficient left to left for several wavelengths
+    :type t1: array
+    :param t2: transmission coefficient centre to centrefor several wavelengths
+    :type t2: array
+    :param c1: coupling coefficient left to centre for several wavelengths
+    :type c1: array
+    :param c2: coupling coefficient left to right for several wavelengths
+    :type c2: array
+    :param s1: splitting coefficient of beam 1 for several wavelengths
+    :type s1: array
+    :param s2: splitting coefficient of beam 1 for several wavelengths
+    :type s2: array
+    :return combiner_tri: Spectral matrix of the combiner
+    :rtype: 3D-array
+
+
+    """
+    tri_splitter = get_splitter(s1, s2)
+    tricoupler = get_tricoupler2(t1, t2, c1, c2)
     combiner_tri = cp.einsum('ijk,jlk->ilk', tricoupler, tri_splitter)
 
     return combiner_tri
@@ -303,6 +347,8 @@ def get_splitter(s1, s2):
 def get_tricoupler(t_coeff, c_coeff):
     """Get transfer matrix of a tricoupler.
 
+    DEPRECATED
+
     Transfer matrix of a tricoupler. Center row is the null output,
     phase and antinull is recovered from linear combinations of
     the three outputs (rows)
@@ -318,18 +364,70 @@ def get_tricoupler(t_coeff, c_coeff):
     phi_c = 0.
     ones = np.ones_like(phi_tc)
     z = np.zeros_like(phi_tc)
-    tricoupler = np.exp(1j * phi_c) * np.array([[t_coeff * np.exp(1j*phi_tc), c_coeff, z, z],
-                                                [c_coeff, c_coeff, z, z],
-                                                [c_coeff, t_coeff *
-                                                 np.exp(1j*phi_tc), z, z],
-                                                [z, z, ones, z],
-                                                [z, z, z, ones]], dtype=np.complex64)
+    tricoupler = np.array([[t_coeff * np.exp(1j*phi_tc), c_coeff, z, z],
+                           [c_coeff, c_coeff, z, z],
+                           [c_coeff, t_coeff * np.exp(1j*phi_tc), z, z],
+                           [z, z, ones, z],
+                           [z, z, z, ones]], dtype=np.complex64)
+    tricoupler[:3, :2] *= np.exp(1j * phi_c)
+    tricoupler = cp.asarray(tricoupler)
+
+    return tricoupler
+
+
+def get_tricoupler2(t1, t2, c1, c2):
+    """Get transfer matrix of a tricoupler.
+
+    Transfer matrix of a tricoupler. Center row is the null output,
+    phase and antinull is recovered from linear combinations of
+    the three outputs (rows)
+
+    Structure:
+        1st row = left output
+        2st row = null output
+        3rd row = right output
+        4th row = photometric output A
+        5th row = photometric output B
+    """
+    phi_c1 = 0.
+    z2 = 1/2 * (2*c2 - c1**2/c2 - 1j * (4*t1**2*c2**2 - c1**4)**0.5/(c2))
+    dphi2 = np.arccos(c1/(2*abs(z2))) - np.angle(z2)
+    dphi1 = dphi2 + np.arccos(-c1**2/(2*t1*c2))
+
+    zeros = np.zeros_like(t1)
+    ones = np.ones_like(t1)
+
+    t1_coeff = t1*np.exp(1j*dphi1)
+    c2_coeff = c2*np.exp(1j*dphi2)
+    tricoupler = np.array([[t1_coeff, c2_coeff, zeros, zeros],
+                           [c1, c1, zeros, zeros],
+                           [c2_coeff, t1_coeff, zeros, zeros],
+                           [zeros, zeros, ones, zeros],
+                           [zeros, zeros, zeros, ones]],
+                          dtype=np.complex64)
+    tricoupler[:3, :2] *= np.exp(1j*phi_c1)
     tricoupler = cp.asarray(tricoupler)
 
     return tricoupler
 
 
 def get_tricoupler_coeffs(path_left, path_center, path_right, wl):
+    """Load coefficients of the tricoupler from 1-by-1 injection.
+
+    DEPRECATED
+
+    :param path_left: DESCRIPTION
+    :type path_left: TYPE
+    :param path_center: DESCRIPTION
+    :type path_center: TYPE
+    :param path_right: DESCRIPTION
+    :type path_right: TYPE
+    :param wl: DESCRIPTION
+    :type wl: TYPE
+    :return: DESCRIPTION
+    :rtype: TYPE
+
+    """
     l_out = np.transpose(np.loadtxt(path_left))
     c_out = np.transpose(np.loadtxt(path_center))
     r_out = np.transpose(np.loadtxt(path_right))
@@ -346,6 +444,48 @@ def get_tricoupler_coeffs(path_left, path_center, path_right, wl):
     c_coeff_interp = np.interp(wl, wl0, c_coeff)
 
     return t_coeff_interp, c_coeff_interp
+
+
+def get_tricoupler_coeffs2(path_inj_left, path_inj_centre, path_inj_right, wl):
+    """Load coefficients of the tricoupler from 1-by-1 injection.
+
+    :param path_inj_left: tuple of files of coefficients
+                            when injection in left input
+    :type path_inj_left: 3-tuple
+    :param path_inj_centre: tuple of files of coefficients
+                            when injection in centre input
+    :type path_inj_centre: 3-tuple
+    :param path_inj_right: tuple of files of coefficients
+                            when injection in right input
+    :type path_inj_right: 3-tuple
+    :param wl: DESCRIPTION
+    :type wl: array
+    :return t1_interp: interpolated values of the coefficient left-left
+    :rtype: array
+    :return t2_interp: interpolated values of the coefficient centre-centre
+    :rtype: array
+    :return c1_interp: interpolated values of the coefficient left-centre
+    :rtype: array
+    :return c2_interp: interpolated values of the coefficient left-right
+    :rtype: array
+
+    """
+    inj_left = [np.transpose(np.loadtxt(elt)) for elt in path_inj_left]
+    inj_centre = [np.transpose(np.loadtxt(elt)) for elt in path_inj_centre]
+    inj_right = [np.transpose(np.loadtxt(elt)) for elt in path_inj_right]
+
+    wl0 = np.array(inj_left[0][0])*1e-6
+    t1 = inj_left[0][1]**0.5
+    t2 = inj_centre[1][1]**0.5
+    c1 = inj_left[1][1]**0.5
+    c2 = inj_left[2][1]**0.5
+
+    t1_interp = np.interp(wl, wl0, t1)
+    t2_interp = np.interp(wl, wl0, t2)
+    c1_interp = np.interp(wl, wl0, c1)
+    c2_interp = np.interp(wl, wl0, c2)
+
+    return t1_interp, t2_interp, c1_interp, c2_interp
 
 
 def get_bicoupler_coeffs(zeta_path, wl):
@@ -449,3 +589,58 @@ def get_bicombiner(alpha_b1, alpha_b2, kappa_12, kappa_21):
     bicombiner = cp.einsum('ijk,jlk->ilk', bicoupler, bi_splitter)
 
     return bicombiner
+
+
+if __name__ == "__main__":
+    path_inj_left = ['3DTriRatioCplLen1700Wvl14-17_Left_bp_mon_1_last.dat',
+                     '3DTriRatioCplLen1700Wvl14-17_Left_bp_mon_2_last.dat',
+                     '3DTriRatioCplLen1700Wvl14-17_Left_bp_mon_3_last.dat']
+    path_inj_centre = ['3DTriRatioCplLen1700Wvl14-17_Centre_bp_mon_1_last.dat',
+                       '3DTriRatioCplLen1700Wvl14-17_Centre_bp_mon_2_last.dat',
+                       '3DTriRatioCplLen1700Wvl14-17_Centre_bp_mon_3_last.dat']
+    path_inj_right = ['3DTriRatioCplLen1700Wvl14-17_Right_bp_mon_1_last.dat',
+                      '3DTriRatioCplLen1700Wvl14-17_Right_bp_mon_2_last.dat',
+                      '3DTriRatioCplLen1700Wvl14-17_Right_bp_mon_3_last.dat']
+
+    wavel = 1.6e-6  # Wavelength of observation (in meter)
+    # Bandwidth around the wavelength of observation (in meter)
+    bandwidth = 0.2e-6
+    dwl = 5e-9  # Width of one spectral channel (in meter)
+
+    wl = np.arange(wavel-bandwidth/2, wavel+bandwidth/2, dwl)
+    coeff_tri = 1/4. * np.ones(wl.shape)
+
+    t1, t2, c1, c2 = \
+        get_tricoupler_coeffs2(
+            path_inj_left, path_inj_centre, path_inj_right, wl)
+
+    # t1 = t2 = c1 = c2 = 1/3**0.5 * np.ones(wl.shape)
+
+    tricoupler = get_tricombiner(t1, c1, coeff_tri, coeff_tri)
+    tricoupler2 = get_tricombiner2(t1, t2, c1, c2, coeff_tri, coeff_tri)
+
+    phase = np.linspace(0, 2*np.pi, 1000, False)
+    i_out = []
+    i_out2 = []
+    for p in phase:
+        a_in = cp.array([np.exp(1j*p)*np.ones_like(wl), np.ones_like(wl)])
+
+        a_out = cp.einsum('ijk,jk->ik', tricoupler, a_in)
+        i_out.append(abs(cp.asnumpy(a_out))**2)
+
+        a_out2 = cp.einsum('ijk,jk->ik', tricoupler2, a_in)
+        i_out2.append(abs(cp.asnumpy(a_out2))**2)
+
+    i_out = np.array(i_out)
+    i_out2 = np.array(i_out2)
+
+    plt.figure()
+    plt.plot(phase, i_out[:, 0, 10])
+    plt.plot(phase, i_out[:, 1, 10])
+    plt.plot(phase, i_out[:, 2, 10])
+    plt.grid()
+    plt.figure()
+    plt.plot(phase, i_out2[:, 0, 10])
+    plt.plot(phase, i_out2[:, 1, 10])
+    plt.plot(phase, i_out2[:, 2, 10])
+    plt.grid()
